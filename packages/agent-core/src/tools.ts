@@ -11,6 +11,8 @@ export interface ToolContext {
   runId: string;
   stepId?: string;
   signal?: AbortSignal;
+  /** Absolute project workspace root (empty string when unavailable). */
+  workspaceRoot?: string;
 }
 
 export interface Tool<I = unknown, O = unknown> {

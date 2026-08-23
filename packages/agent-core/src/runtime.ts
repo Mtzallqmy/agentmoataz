@@ -48,6 +48,7 @@ export interface RuntimeOptions {
   approvalResolver?: (req: ApprovalRequest) => boolean | Promise<boolean>;
   maxSteps?: number;
   perToolTimeoutMs?: number;
+  workspaceRoot?: string;
 }
 
 export interface RunResult {
@@ -87,6 +88,7 @@ export class AgentRuntime {
   private approvalResolver: (req: ApprovalRequest) => boolean | Promise<boolean>;
   private maxSteps: number;
   private perToolTimeoutMs: number;
+  private workspaceRoot?: string;
 
   private runs = new Map<string, AgentRun>();
   private controllers = new Map<string, AbortController>();
@@ -105,6 +107,7 @@ export class AgentRuntime {
     this.approvalResolver = opts.approvalResolver ?? (() => false);
     this.maxSteps = opts.maxSteps ?? 100;
     this.perToolTimeoutMs = opts.perToolTimeoutMs ?? DEFAULT_TOOL_TIMEOUT_MS;
+    this.workspaceRoot = opts.workspaceRoot;
   }
 
   getRun(id: string): AgentRun | undefined {
@@ -455,6 +458,7 @@ export class AgentRuntime {
               runId,
               stepId,
               signal: outerSignal,
+              workspaceRoot: this.workspaceRoot ?? "",
             }),
             tool.timeoutMs ?? this.perToolTimeoutMs,
             tool.name

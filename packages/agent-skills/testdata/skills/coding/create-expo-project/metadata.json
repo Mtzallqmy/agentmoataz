@@ -1,0 +1,17 @@
+{
+  "skill": {
+    "name": "create-expo-project",
+    "purpose": "Scaffold a clean Expo + TypeScript project in the workspace.",
+    "triggers": ["create expo", "new expo project", "expo app"],
+    "prerequisites": ["workspace exists", "write permission"],
+    "steps": [
+      "Create package.json with Expo + TypeScript",
+      "Create App.tsx and tsconfig",
+      "Write README.md",
+      "Verify file tree"
+    ],
+    "allowedTools": ["write_file", "read_file", "list_tree"],
+    "validation": ["App.tsx exists", "package.json parses"],
+    "recovery": "restore latest checkpoint before retrying"
+  }
+}
