@@ -1,0 +1,33 @@
+# dependencies
+node_modules/
+.pnpm-store/
+
+# builds
+dist/
+build/
+.expo/
+*.apk
+*.aab
+
+# generated projects / workspaces
+projects/
+exports/
+
+# env & secrets
+.env
+.env.*
+!.env.example
+
+# logs & caches
+*.log
+coverage/
+.turbo/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# android
+android/app/build/
+android/.gradle/
+local.properties
