@@ -78,9 +78,11 @@ describe("OpenAICompatibleProvider", () => {
   });
 
   it("preserves a base URL path even without a trailing slash", async () => {
-    const fetchMock = vi.fn(async () => new Response(JSON.stringify({
-      choices: [{ message: { content: "OK" }, finish_reason: "stop" }],
-    }), { status: 200, headers: { "content-type": "application/json" } }));
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit): Promise<Response> =>
+      new Response(JSON.stringify({
+        choices: [{ message: { content: "OK" }, finish_reason: "stop" }],
+      }), { status: 200, headers: { "content-type": "application/json" } })
+    );
     vi.stubGlobal("fetch", fetchMock);
 
     const provider = new OpenAICompatibleProvider(
@@ -92,7 +94,7 @@ describe("OpenAICompatibleProvider", () => {
     );
     const response = await provider.chat({ messages: [{ role: "user", content: "ping" }] });
     expect(response.content).toBe("OK");
-    expect(String(fetchMock.mock.calls[0]![0])).toBe("https://api.example.com/v1/chat/completions");
+    expect(String(fetchMock.mock.calls[0]?.[0])).toBe("https://api.example.com/v1/chat/completions");
   });
 
   it("fails clearly when a configured credential reference is missing", async () => {
