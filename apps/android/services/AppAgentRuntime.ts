@@ -193,6 +193,13 @@ export class AppAgentRuntime {
       updatedAt: now,
     };
     await this.platform.fs.mkdir(this.platform.path.join(project.rootPath, "workspace"));
+    for (const sub of ["artifacts", "exports", ".agent/checkpoints", ".agent/memory", ".agent/logs"]) {
+      await this.platform.fs.mkdir(this.platform.path.join(project.rootPath, sub));
+    }
+    await this.platform.fs.writeText(
+      this.platform.path.join(project.rootPath, ".agent", "project.json"),
+      JSON.stringify({ id, name: project.name, createdAt: now, updatedAt: now }, null, 2)
+    );
     await this.db!.runAsync("INSERT INTO projects(id,payload_json,updated_at) VALUES(?,?,?)", id, JSON.stringify(project), now);
     return project;
   }

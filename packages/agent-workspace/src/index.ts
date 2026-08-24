@@ -1,6 +1,6 @@
 import { utf8Encode, type CryptoAdapter, type FileSystemAdapter, type PathAdapter, type PlatformAdapters } from "@agentmoataz/agent-platform";
 import { AgentError, type StructuredError } from "@agentmoataz/agent-protocol";
-import { safeJoin, maxFileBytes } from "./paths.js";
+import { maxArchiveBytes, maxArchiveEntries, maxFileBytes, safeArchiveEntryName, safeJoin } from "./paths.js";
 import JSZip from "jszip";
 
 export interface FileEntry {
@@ -71,6 +71,13 @@ export class Workspace {
     await this.fs.writeText(this.absolute(relativePath), content);
   }
 
+  async createFile(relativePath: string, content: string): Promise<void> {
+    if (await this.fs.exists(this.absolute(relativePath))) {
+      throw new AgentError({ code: "INVALID_TOOL_ARGUMENT", category: "workspace", message: `file already exists: ${JSON.stringify(relativePath)}`, recoverable: false, retryable: false });
+    }
+    await this.writeFile(relativePath, content);
+  }
+
   async writeBytes(relativePath: string, content: Uint8Array): Promise<void> {
     if (content.byteLength > maxFileBytes()) {
       throw new AgentError({ code: "INVALID_TOOL_ARGUMENT", category: "workspace", message: `file exceeds ${maxFileBytes()} byte limit`, recoverable: false, retryable: false });
@@ -118,10 +125,58 @@ export class Workspace {
     const zip = new JSZip();
     const exclude = options?.exclude ?? [/(^|\/)node_modules\//, /(^|\/)\.env$/, /(^|\/)\.agent\//, /(^|\/)\.git\//];
     const files = (await this.listTree("")).filter((entry) => !entry.isDirectory && !exclude.some((regex) => regex.test(entry.relativePath)));
-    for (const file of files) zip.file(file.relativePath, await this.fs.readBytes(this.absolute(file.relativePath)));
+    let total = 0;
+    for (const file of files) {
+      if (file.sizeBytes > maxFileBytes()) throw new AgentError({ code: "INVALID_TOOL_ARGUMENT", category: "workspace", message: `file too large for archive: ${file.relativePath}`, recoverable: false, retryable: false });
+      total += file.sizeBytes;
+      if (total > maxArchiveBytes()) throw new AgentError({ code: "INVALID_TOOL_ARGUMENT", category: "workspace", message: `archive exceeds ${maxArchiveBytes()} byte limit`, recoverable: false, retryable: false });
+      zip.file(file.relativePath, await this.fs.readBytes(this.absolute(file.relativePath)));
+    }
     const bytes = await zip.generateAsync({ type: "uint8array" });
+    if (bytes.byteLength > maxArchiveBytes()) throw new AgentError({ code: "INVALID_TOOL_ARGUMENT", category: "workspace", message: `zip exceeds ${maxArchiveBytes()} byte limit`, recoverable: false, retryable: false });
     await this.writeBytes(zipRelativePath, bytes);
     return this.crypto.sha256Bytes(bytes);
+  }
+
+  async extractZip(zipRelativePath: string, destRelativePath = ""): Promise<string[]> {
+    const zipBytes = await this.fs.readBytes(this.absolute(zipRelativePath));
+    if (zipBytes.byteLength > maxArchiveBytes()) throw new AgentError({ code: "INVALID_TOOL_ARGUMENT", category: "workspace", message: `zip exceeds ${maxArchiveBytes()} byte limit`, recoverable: false, retryable: false });
+    const zip = await JSZip.loadAsync(zipBytes);
+    const entryNames = Object.keys(zip.files);
+    if (entryNames.length > maxArchiveEntries()) throw new AgentError({ code: "INVALID_TOOL_ARGUMENT", category: "workspace", message: `archive exceeds ${maxArchiveEntries()} entry limit`, recoverable: false, retryable: false });
+    let totalUncompressed = 0;
+    const extracted: string[] = [];
+    for (const raw of entryNames) {
+      const file = zip.files[raw]!;
+      if (file.dir) continue;
+      const safe = safeArchiveEntryName(raw);
+      const content = await file.async("uint8array");
+      totalUncompressed += content.byteLength;
+      if (content.byteLength > maxFileBytes()) throw new AgentError({ code: "INVALID_TOOL_ARGUMENT", category: "workspace", message: `archive entry too large: ${safe}`, recoverable: false, retryable: false });
+      if (totalUncompressed > maxArchiveBytes()) throw new AgentError({ code: "INVALID_TOOL_ARGUMENT", category: "workspace", message: `uncompressed archive exceeds ${maxArchiveBytes()} byte limit`, recoverable: false, retryable: false });
+    }
+    for (const raw of entryNames) {
+      const file = zip.files[raw]!;
+      if (file.dir) continue;
+      const safe = safeArchiveEntryName(raw);
+      const destRel = destRelativePath ? `${destRelativePath.replace(/\/$/, "")}/${safe}` : safe;
+      const content = await file.async("uint8array");
+      await this.writeBytes(destRel, content);
+      extracted.push(destRel);
+    }
+    return extracted;
+  }
+
+  async applyPatch(relativePath: string, patch: string): Promise<void> {
+    const current = await this.readFile(relativePath);
+    const lines = current.split(/\r?\n/);
+    const patchLines = patch.split(/\r?\n/);
+    if (patchLines.some((l) => l.startsWith("--- ") || l.startsWith("+++ ") || l.startsWith("@@"))) {
+      const next = applyUnifiedPatch(lines, patchLines);
+      await this.writeFile(relativePath, next.join("\n"));
+    } else {
+      await this.writeFile(relativePath, patch);
+    }
   }
 
   private async assertSizeLimit(absolute: string): Promise<void> {
@@ -139,6 +194,20 @@ function wrapFsError(error: unknown, path: string): Error {
 }
 
 function escapeRegex(value: string): string { return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); }
+
+function applyUnifiedPatch(original: string[], patchLines: string[]): string[] {
+  const result: string[] = [];
+  let oi = 0;
+  for (const line of patchLines) {
+    if (line.startsWith("--- ") || line.startsWith("+++ ") || line.startsWith("@@")) continue;
+    if (line.startsWith(" ")) result.push(original[oi++] ?? line.slice(1));
+    else if (line.startsWith("-")) oi++;
+    else if (line.startsWith("+")) result.push(line.slice(1));
+    else result.push(line);
+  }
+  while (oi < original.length) result.push(original[oi++]!);
+  return result;
+}
 
 export function simpleDiff(aName: string, bName: string, a: string[], b: string[]): string {
   const n = a.length;
