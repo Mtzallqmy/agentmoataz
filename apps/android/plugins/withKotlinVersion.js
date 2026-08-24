@@ -11,7 +11,7 @@ const KOTLIN_GRADLE_PLUGIN = "org.jetbrains.kotlin:kotlin-gradle-plugin";
  * - Release target is 64-bit ARM only => arm64-v8a.
  *
  * The Expo SDK 52 template declares the Kotlin Gradle plugin without a version.
- * React Native\'s Gradle plugin then supplies Kotlin 1.9.24 transitively, even
+ * React Native's Gradle plugin then supplies Kotlin 1.9.24 transitively, even
  * when android.kotlinVersion and rootProject.ext.kotlinVersion are both 1.9.25.
  * Pinning the buildscript classpath is therefore necessary as well.
  */
@@ -39,7 +39,7 @@ module.exports = function withAndroidReleaseToolchain(config) {
       throw new Error("AgentMoataz requires a Groovy Android root build.gradle file.");
     }
 
-    const kotlinClasspathPattern = /classpath\\s*\\(\\s*[\'"]org\\.jetbrains\\.kotlin:kotlin-gradle-plugin(?::[^\'"]*)?[\'"]\\s*\\)/g;
+    const kotlinClasspathPattern = /classpath\s*\(\s*['"]org\.jetbrains\.kotlin:kotlin-gradle-plugin(?::[^'"]*)?['"]\s*\)/g;
     const replacement = `classpath("${KOTLIN_GRADLE_PLUGIN}:${KOTLIN_VERSION}")`;
     const contents = configWithGradle.modResults.contents;
 
