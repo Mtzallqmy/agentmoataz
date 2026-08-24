@@ -1,17 +1,21 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { Text, View } from "react-native";
 import { useLocalSearchParams } from "expo-router";
 import { Button, Card, EventTimeline, Field, Screen, Title, ui } from "../components/AppUI";
 import { useApprovals, useProjects, useRun } from "../services/AppAgentContext";
 
 export default function ChatRun() {
-  const params = useLocalSearchParams<{ projectId?: string }>();
+  const params = useLocalSearchParams<{ projectId?: string; goal?: string }>();
   const { projects, createProject } = useProjects();
   const { runtime, activeRunId, paused, events, error } = useRun();
   const { pendingApproval, approve, deny } = useApprovals();
-  const [goal, setGoal] = useState("");
+  const [goal, setGoal] = useState(params.goal ?? "");
   const [answer, setAnswer] = useState("");
   const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (typeof params.goal === "string" && params.goal && !busy && !activeRunId) setGoal(params.goal);
+  }, [params.goal, busy, activeRunId]);
 
   const run = async () => {
     if (!goal.trim() || busy || activeRunId) return;
