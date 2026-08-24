@@ -24,18 +24,18 @@ export const PlanSchema = z.object({
 
 /** Detect dependency cycles; returns the offending ids (empty = acyclic). */
 export function findCycle(steps: Array<{ id: string; dependencies: string[] }>): string[] {
-  const byId = new Map(steps.map((s) => [s.id, s]));
-  const state = new Map<string, 0 | 1 | 2>(); // white/grey/black
+  const byId = new Map(steps.map((step) => [step.id, step]));
+  const state = new Map<string, 0 | 1 | 2>();
   let cycle: string[] = [];
 
   const visit = (id: string, stack: string[]): void => {
     if (cycle.length) return;
-    const st = state.get(id) ?? 0;
-    if (st === 1) {
+    const current = state.get(id) ?? 0;
+    if (current === 1) {
       cycle = [...stack.slice(stack.indexOf(id)), id];
       return;
     }
-    if (st === 2) return;
+    if (current === 2) return;
     state.set(id, 1);
     for (const dep of byId.get(id)?.dependencies ?? []) {
       if (byId.has(dep)) visit(dep, [...stack, id]);
@@ -43,12 +43,11 @@ export function findCycle(steps: Array<{ id: string; dependencies: string[] }>):
     }
     state.set(id, 2);
   };
-  for (const s of steps) visit(s.id, []);
+  for (const step of steps) visit(step.id, []);
   return cycle;
 }
 
 function extractJson(text: string): unknown {
-  // strip markdown fences and take the outermost JSON object
   const cleaned = text.replace(/```json|```/g, "").trim();
   const start = cleaned.indexOf("{");
   const end = cleaned.lastIndexOf("}");
@@ -66,28 +65,26 @@ export interface ParsedPlan {
   }>;
 }
 
-/** Repair: schema-validate, dedupe titles, drop dangling deps, break cycles. */
+/** Repair: schema-validate, dedupe titles, drop dangling deps, reject cycles. */
 export function repairPlan(raw: unknown): ParsedPlan {
-  const data = PlanSchema.parse(raw); // throws on unusable shape -> caller falls back
-
+  const data = PlanSchema.parse(raw);
   const out: ParsedPlan["steps"] = [];
   const titles = new Set<string>();
-  for (const s of data.steps) {
-    const key = s.title.trim().toLowerCase();
-    if (titles.has(key)) continue; // dedupe
+  for (const step of data.steps) {
+    const key = step.title.trim().toLowerCase();
+    if (titles.has(key)) continue;
     titles.add(key);
-    // dependencies reference PRIOR step indexes as strings ("0","1"); drop invalid refs
-    const deps = s.dependencies.filter((d) => /^\d+$/.test(d) && Number(d) < out.length);
+    const deps = step.dependencies.filter((dep) => /^\d+$/.test(dep) && Number(dep) < out.length);
     out.push({
-      title: s.title,
-      ...(s.goal !== undefined ? { goal: s.goal } : {}),
+      title: step.title,
+      ...(step.goal !== undefined ? { goal: step.goal } : {}),
       dependencies: deps,
-      expectedTools: s.expectedTools,
-      acceptanceCriteria: s.acceptanceCriteria,
+      expectedTools: step.expectedTools,
+      acceptanceCriteria: step.acceptanceCriteria,
     });
   }
 
-  const cycle = findCycle(out.map((s, i) => ({ id: String(i), dependencies: s.dependencies })));
+  const cycle = findCycle(out.map((step, index) => ({ id: String(index), dependencies: step.dependencies })));
   if (cycle.length) throw new Error("cycle detected in plan");
   return { steps: out };
 }
@@ -116,26 +113,25 @@ export class ModelDrivenPlanner {
         content:
           "You are a planning engine. Reply with ONLY a JSON object of shape " +
           '{"steps":[{"title":string,"goal"?:string,"dependencies"?:string[],"expectedTools"?:string[],"acceptanceCriteria"?:string[]}]}. ' +
-          `Maximum ${MAX_PLAN_STEPS} steps. Dependencies reference prior step indexes as strings. No prose.`,
+          `Maximum ${MAX_PLAN_STEPS} steps. Dependencies reference prior step indexes as strings. Every concrete step should include observable acceptance criteria. No prose.`,
       },
-      {
-        role: "user",
-        content: `Goal: ${input.goal}\n\n${contextLines.join("\n\n")}`,
-      },
+      { role: "user", content: `Goal: ${input.goal}\n\n${contextLines.join("\n\n")}` },
     ];
 
     try {
-      const res = await this.provider.chat({ messages, temperature: 0 });
-      const raw = extractJson(res.content);
+      const response = await this.provider.chat({ messages, temperature: 0 });
+      const raw = extractJson(response.content);
       const plan = repairPlan(raw);
       if (plan.steps.length === 0) return defaultPlan(input);
-      return plan.steps.map((s) => ({
-        title: s.title,
-        ...(s.goal !== undefined ? { goal: s.goal } : {}),
-        expectedTools: s.expectedTools,
+      return plan.steps.map((step) => ({
+        title: step.title,
+        ...(step.goal !== undefined ? { goal: step.goal } : {}),
+        dependencies: step.dependencies,
+        expectedTools: step.expectedTools,
+        acceptanceCriteria: step.acceptanceCriteria,
       }));
     } catch {
-      return defaultPlan(input); // deterministic fallback
+      return defaultPlan(input);
     }
   }
 }
