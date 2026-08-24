@@ -2,13 +2,13 @@
  * agent-net — network tools with hard limits. All downloaded/fetched content
  * is UNTRUSTED data; it never becomes instructions.
  *
- * - http_get / http_request: response size caps, redirect caps, timeout,
- *   cancellation, permission gating happens in the caller (ToolRegistry).
+ * React Native fetch does not consistently expose a WHATWG ReadableStream,
+ * so response bodies are decoded from ArrayBuffer rather than getReader().
  */
 import { z } from "zod";
 import { AgentError } from "@agentmoataz/agent-protocol";
 import type { Tool } from "@agentmoataz/agent-core";
-import type { PlatformAdapters } from "@agentmoataz/agent-platform";
+import { utf8Decode, type PlatformAdapters } from "@agentmoataz/agent-platform";
 
 const MAX_RESPONSE_BYTES = 5 * 1024 * 1024;
 const MAX_REDIRECTS = 5;
@@ -32,20 +32,32 @@ async function boundedFetch(
   const timer = setTimeout(() => controller.abort(new Error("timeout")), DEFAULT_TIMEOUT_MS);
   try {
     return await fetch(url, { ...init, signal: controller.signal, redirect: "manual" });
+  } catch (error) {
+    if (signal?.aborted) {
+      throw new AgentError({ code: "TOOL_CANCELLED", category: "tool", message: "network request cancelled", recoverable: true, retryable: false });
+    }
+    throw new AgentError({
+      code: "NETWORK_UNAVAILABLE",
+      category: "network",
+      message: error instanceof Error ? error.message : "network request failed",
+      recoverable: true,
+      retryable: true,
+      technicalCause: error instanceof Error ? error.message : String(error),
+    });
   } finally {
     clearTimeout(timer);
     signal?.removeEventListener("abort", onAbort);
   }
 }
 
-/** Follow redirects manually with a cap and same-size guard. */
+/** Follow redirects manually with a cap. */
 async function fetchWithLimits(url: string, method: string, headers: Record<string, string>, body?: string, signal?: AbortSignal): Promise<Response> {
   let current = url;
   for (let i = 0; i <= MAX_REDIRECTS; i++) {
     const res = await boundedFetch(current, { method, headers, ...(body !== undefined ? { body } : {}) }, signal);
     if (res.status >= 300 && res.status < 400) {
       const loc = res.headers.get("location");
-      await res.body?.cancel().catch(() => undefined);
+      await res.body?.cancel?.().catch(() => undefined);
       if (!loc) throw new AgentError({
         code: "NETWORK_UNAVAILABLE", category: "network",
         message: `redirect without location at step ${i}`, recoverable: false, retryable: false,
@@ -62,22 +74,13 @@ async function fetchWithLimits(url: string, method: string, headers: Record<stri
 }
 
 async function readBounded(res: Response): Promise<{ text: string; truncated: boolean }> {
-  const reader = res.body?.getReader();
-  if (!reader) return { text: "", truncated: false };
-  const decoder = new TextDecoder();
-  let text = "";
-  let total = 0;
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    total += value!.length;
-    if (total > MAX_RESPONSE_BYTES) {
-      await reader.cancel().catch(() => undefined);
-      return { text, truncated: true };
-    }
-    text += decoder.decode(value!, { stream: true });
-  }
-  return { text: text + decoder.decode(), truncated: false };
+  const announced = Number(res.headers.get("content-length") ?? "0");
+  const bytes = new Uint8Array(await res.arrayBuffer());
+  const truncated = bytes.byteLength > MAX_RESPONSE_BYTES || (Number.isFinite(announced) && announced > MAX_RESPONSE_BYTES);
+  return {
+    text: utf8Decode(truncated ? bytes.slice(0, MAX_RESPONSE_BYTES) : bytes),
+    truncated,
+  };
 }
 
 export function buildHttpTools(platform?: Pick<PlatformAdapters, "fs" | "path">): Tool[] {
@@ -112,13 +115,7 @@ export function buildHttpTools(platform?: Pick<PlatformAdapters, "fs" | "path">)
       body: z.string().max(1024 * 1024).optional(),
     }),
     async execute(input, ctx) {
-      const res = await fetchWithLimits(
-        input.url,
-        input.method,
-        input.headers ?? {},
-        input.body,
-        ctx.signal
-      );
+      const res = await fetchWithLimits(input.url, input.method, input.headers ?? {}, input.body, ctx.signal);
       const { text, truncated } = await readBounded(res);
       return {
         status: res.status,
@@ -135,16 +132,12 @@ export function buildHttpTools(platform?: Pick<PlatformAdapters, "fs" | "path">)
     permissionCategory: "download",
     inputSchema: z.object({ url: z.string().url(), fileName: z.string().min(1).max(120) }),
     async execute(input, ctx) {
-      // safe filename: strip any path components / traversal
       if (!platform) {
         throw new AgentError({ code: "CAPABILITY_UNAVAILABLE", category: "capability", message: "download filesystem adapter unavailable", recoverable: false, retryable: false });
       }
       const safeName = platform.path.basename(input.fileName).replace(/[^\w.\-]+/g, "_");
       if (!safeName || safeName === "." || safeName === "..") {
-        throw new AgentError({
-          code: "INVALID_TOOL_ARGUMENT", category: "argument",
-          message: "invalid file name", recoverable: false, retryable: false,
-        });
+        throw new AgentError({ code: "INVALID_TOOL_ARGUMENT", category: "argument", message: "invalid file name", recoverable: false, retryable: false });
       }
       const workspaceRoot = ctx.workspaceRoot;
       if (!workspaceRoot) {
@@ -155,18 +148,25 @@ export function buildHttpTools(platform?: Pick<PlatformAdapters, "fs" | "path">)
       const dest = platform.path.join(destDir, safeName);
 
       const res = await fetchWithLimits(input.url, "GET", {}, undefined, ctx.signal);
-      const bytes = new Uint8Array(await res.arrayBuffer());
-      if (bytes.byteLength > MAX_RESPONSE_BYTES) {
+      if (!res.ok) {
         throw new AgentError({
-          code: "INVALID_TOOL_ARGUMENT", category: "network",
-          message: `download exceeds ${MAX_RESPONSE_BYTES} byte limit`, recoverable: false, retryable: false,
+          code: "NETWORK_UNAVAILABLE",
+          category: "network",
+          message: `download returned HTTP ${res.status}`,
+          recoverable: res.status >= 500,
+          retryable: res.status >= 500,
         });
       }
+      const announced = Number(res.headers.get("content-length") ?? "0");
+      if (Number.isFinite(announced) && announced > MAX_RESPONSE_BYTES) {
+        throw new AgentError({ code: "INVALID_TOOL_ARGUMENT", category: "network", message: `download exceeds ${MAX_RESPONSE_BYTES} byte limit`, recoverable: false, retryable: false });
+      }
+      const bytes = new Uint8Array(await res.arrayBuffer());
+      if (bytes.byteLength > MAX_RESPONSE_BYTES) {
+        throw new AgentError({ code: "INVALID_TOOL_ARGUMENT", category: "network", message: `download exceeds ${MAX_RESPONSE_BYTES} byte limit`, recoverable: false, retryable: false });
+      }
       await platform.fs.writeBytes(dest, bytes);
-      return {
-        path: platform.path.relative(workspaceRoot, dest),
-        sizeBytes: bytes.byteLength,
-      };
+      return { path: platform.path.relative(workspaceRoot, dest), sizeBytes: bytes.byteLength };
     },
   };
 
