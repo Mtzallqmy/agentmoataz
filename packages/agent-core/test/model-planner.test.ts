@@ -25,7 +25,7 @@ const RESEARCH_PLAN = `{"steps":[
 ]}`;
 
 describe("ModelDrivenPlanner", () => {
-  it("produces materially different plans for different goals", async () => {
+  it("produces materially different plans for different goals and preserves validation metadata", async () => {
     const provider = new MockProvider({
       replies: [
         { match: "calculator", reply: CALCULATOR_PLAN },
@@ -41,15 +41,17 @@ describe("ModelDrivenPlanner", () => {
     expect(a.map((s) => s.title)).not.toContain("Search official Android docs");
     expect(b.map((s) => s.title)).toContain("Search official Android docs");
     expect(b.map((s) => s.title)).not.toContain("Create styles.css");
+    expect(a[0]!.acceptanceCriteria).toEqual(["file exists"]);
+    expect(a[1]!.dependencies).toEqual(["0"]);
   });
 
   it("repairs malformed plans (fences, dupes, dangling deps)", () => {
     const repaired = repairPlan({
       steps: [
         { title: "A", dependencies: ["9"], expectedTools: ["write_file"] },
-        { title: "a", dependencies: [] }, // duplicate title -> dropped
+        { title: "a", dependencies: [] },
         { title: "B", dependencies: ["0"] },
-        { title: "C", dependencies: ["0", "1", "77"] }, // 77 dangling -> dropped
+        { title: "C", dependencies: ["0", "1", "77"] },
       ],
     });
     expect(repaired.steps).toHaveLength(3);
@@ -82,16 +84,7 @@ describe("ModelDrivenPlanner", () => {
 
   it("includes memory/skills context in the request", async () => {
     let captured = "";
-    const provider = new MockProvider({
-      replies: [
-        {
-          match: "",
-          reply: RESEARCH_PLAN,
-          toolCalls: undefined,
-        },
-      ],
-    });
-    // wrap chat to capture messages
+    const provider = new MockProvider({ replies: [{ match: "", reply: RESEARCH_PLAN, toolCalls: undefined }] });
     const orig = provider.chat.bind(provider);
     provider.chat = async (req) => {
       captured = req.messages.map((m) => m.content).join("|");
