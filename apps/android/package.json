@@ -29,6 +29,7 @@
     "@agentmoataz/agent-team": "workspace:*",
     "@agentmoataz/agent-workspace": "workspace:*",
     "expo": "~52.0.0",
+    "expo-asset": "~11.0.0",
     "expo-router": "~4.0.0",
     "expo-file-system": "~18.0.0",
     "expo-secure-store": "~14.0.0",
