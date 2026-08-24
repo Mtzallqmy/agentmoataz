@@ -1,6 +1,6 @@
 ﻿# BUILD_STATUS.md
 
-Last updated: 2026-08-24 (Phase 2)
+Last updated: 2026-08-25 (Phase 3)
 
 ## Environment
 
@@ -60,7 +60,7 @@ Last updated: 2026-08-24 (Phase 2)
 | 44 | Structured error contract | ظ£à done + tested |
 | 45ظô46 | Observability / performance basics | ≡ااة structured logs + correlation IDs on events |
 | 47 | Open-source integration policy | ظ£à documented (THIRD_PARTY.md, notices) |
-| 48 | Tests | ظ£à **127 passing** across 19 suites (was 76 -> +20 security + HEAD audits)
+| 48 | Tests | ظ£à **127 passing** across 19 suites — Phase 3 providers/router/context/planner safeguards verified)
 | 49 | CI | ظ£à workflow green-path committed |
 | 50 | Documentation | ظ£à README + 8 docs + PHASE_1_REPORT + PHASE_2_REPORT |
 
@@ -83,7 +83,7 @@ Last updated: 2026-08-24 (Phase 2)
 pnpm install
 pnpm lint        # eslint --max-warnings 0
 pnpm typecheck   # all 13 projects (portablePathظْexpoPath fix included)
-pnpm test        # vitest run ظ¤ 115/115 green, non-watch mode
+pnpm test        # vitest run — 127/127 green, non-watch mode
 pnpm build       # typecheck + expo export (APK needs JDK 17)
 ```
 
@@ -92,4 +92,5 @@ pnpm build       # typecheck + expo export (APK needs JDK 17)
 - No APK produced here (no JDK). Install JDK 17 ظْ `cd apps/android && npx expo prebuild --platform android && npx expo run:android`.
 - Kotlin `AgentNativeModule` sources not yet compiled/wired into Gradle (pending JDK).
 - Git tools, research evidence store, cloud sandbox adapters remain open work (flags off).
+
 

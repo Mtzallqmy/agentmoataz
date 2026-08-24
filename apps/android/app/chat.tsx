@@ -56,7 +56,34 @@ export default function ChatRun() {
     </Card> : null}
     {answer ? <Card><Text style={ui.heading}>Model response</Text><Text style={ui.body}>{answer}</Text></Card> : null}
     {error ? <Card><Text style={ui.bad}>{error.code}: {error.message}</Text></Card> : null}
+    <PlanView events={events} />
+    <ArtifactsView events={events} />
     <Text style={ui.heading}>Execution timeline</Text>
     <EventTimeline events={events} />
   </Screen>;
+}
+
+function PlanView({ events }: { events: ReturnType<typeof useRun>["events"] }) {
+  const plans = events.filter((e) => e.type === "plan_updated");
+  const stepsStarted = events.filter((e) => e.type === "step_started");
+  const stepsDone = new Set(events.filter((e) => e.type === "step_completed").map((e) => e.stepId));
+  const stepsFailed = new Set(events.filter((e) => e.type === "step_failed").map((e) => e.stepId));
+  if (plans.length === 0 && stepsStarted.length === 0) return null;
+  return <Card>
+    <Text style={ui.heading}>Plan & Steps</Text>
+    {plans.map((p) => <Text key={p.id} style={ui.body}>Plan: {JSON.stringify((p.payload as { steps?: unknown }).steps ?? p.payload)}</Text>)}
+    {stepsStarted.map((s) => {
+      const sid = s.stepId ?? "";
+      const status = stepsFailed.has(sid) ? "failed" : stepsDone.has(sid) ? "completed" : "running";
+      const color = status === "failed" ? ui.bad : status === "completed" ? ui.good : ui.body;
+      return <Text key={s.id} style={color}>• {(s.payload as { title?: string }).title ?? sid} — {status}</Text>;
+    })}
+    <Text style={ui.muted}>{stepsStarted.length} steps, {stepsDone.size} completed, {stepsFailed.size} failed</Text>
+  </Card>;
+}
+
+function ArtifactsView({ events }: { events: ReturnType<typeof useRun>["events"] }) {
+  const arts = events.filter((e) => e.type === "artifact_created");
+  if (arts.length === 0) return null;
+  return <Card><Text style={ui.heading}>Artifacts</Text>{arts.map((a) => <Text key={a.id} style={ui.body}>{JSON.stringify(a.payload)}</Text>)}</Card>;
 }

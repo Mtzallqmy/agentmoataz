@@ -251,52 +251,128 @@ function toOpenAIMessage(message: ChatMessage): Record<string, unknown> {
   return { role: message.role, content: message.content, ...(message.name ? { name: message.name } : {}) };
 }
 
+export type PrivacyPreference = "localOnly" | "cloudAllowed";
+export type CostPreference = "low" | "balanced" | "quality";
+
 export interface RoutePreference {
   requiredCapability: ProviderCapability;
   preferLocal?: boolean;
+  privacy?: PrivacyPreference;
+  networkAvailable?: boolean;
+  costPreference?: CostPreference;
+  contextSizeTokens?: number;
+  latencyMaxMs?: number;
+  userPreferredProviderId?: string;
 }
 
 export class ProviderRouter {
   constructor(private providers: ModelProvider[]) {}
 
   route(pref: RoutePreference): ModelProvider {
-    const candidates = this.providers.filter((provider) => provider.config.enabled && provider.supports(pref.requiredCapability));
+    const candidates = this.rankCandidates(pref);
     if (candidates.length === 0) {
-      throw new AgentError({
-        code: "CAPABILITY_UNAVAILABLE",
-        category: "capability",
-        message: `no enabled provider supports "${pref.requiredCapability}"`,
-        recoverable: false,
-        retryable: false,
-      });
+      // Map to expected codes per spec
+      if (pref.networkAvailable === false) throw new AgentError({ code: "MODEL_UNAVAILABLE", category: "model", message: `network unavailable for "${pref.requiredCapability}"`, recoverable: true, retryable: false });
+      throw new AgentError({ code: "CAPABILITY_UNAVAILABLE", category: "capability", message: `no enabled provider supports "${pref.requiredCapability}"`, recoverable: false, retryable: false });
     }
-    return candidates.sort((a, b) => b.config.priority - a.config.priority)[0]!;
+    // userPreferredProviderId takes precedence if it satisfies the capability
+    if (pref.userPreferredProviderId) {
+      const preferred = candidates.find((p) => p.config.id === pref.userPreferredProviderId);
+      if (preferred) return preferred;
+    }
+    return candidates[0]!;
   }
 
-  async chatWithFallback(pref: RoutePreference, req: ChatRequest): Promise<ChatResponse> {
-    const candidates = this.providers
-      .filter((provider) => provider.config.enabled && provider.supports(pref.requiredCapability))
-      .sort((a, b) => b.config.priority - a.config.priority);
+  private rankCandidates(pref: RoutePreference): ModelProvider[] {
+    let candidates = this.providers.filter((provider) => provider.config.enabled && provider.supports(pref.requiredCapability));
+    // privacy: localOnly => only mock/local
+    if (pref.privacy === "localOnly" || pref.preferLocal) {
+      const localOnly = candidates.filter((p) => p.config.kind === "mock" || p.config.id.startsWith("local"));
+      if (localOnly.length > 0) candidates = localOnly;
+    }
+    // networkAvailable false => only local/mock can be used
+    if (pref.networkAvailable === false) {
+      candidates = candidates.filter((p) => p.config.kind === "mock" || p.config.id.startsWith("local"));
+      if (candidates.length === 0) return [];
+    }
+    // long_context requires provider with long_context capability
+    if (pref.contextSizeTokens !== undefined && pref.contextSizeTokens > 8000) {
+      const longCtx = candidates.filter((p) => p.supports("long_context"));
+      if (longCtx.length > 0) candidates = longCtx;
+    }
+    // latency: filter providers that are known slow (priority as proxy) — if latencyMaxMs very low, prefer high priority local
+    // costPreference: low => prefer mock/local (priority 0-10), quality => prefer high priority cloud
+    if (pref.costPreference === "low") candidates = [...candidates].sort((a, b) => a.config.priority - b.config.priority);
+    else candidates = [...candidates].sort((a, b) => b.config.priority - a.config.priority);
+    // final tie-breaker: priority desc, then enabled
+    return candidates.sort((a, b) => {
+      // preferLocal already filtered, but if equal priority keep original order
+      if (pref.costPreference === "low") return a.config.priority - b.config.priority;
+      return b.config.priority - a.config.priority;
+    });
+  }
+
+  async chatWithFallback(pref: RoutePreference, req: ChatRequest, signal?: AbortSignal): Promise<ChatResponse> {
+    const candidates = this.rankCandidates(pref);
+    if (candidates.length === 0) {
+      throw new AgentError({ code: "MODEL_UNAVAILABLE", category: "model", message: `no provider for "${pref.requiredCapability}" (network=${pref.networkAvailable})`, recoverable: true, retryable: false });
+    }
     let lastError: unknown;
     for (const provider of candidates) {
       try {
-        return await provider.chat(req);
+        return await provider.chat(req, signal);
       } catch (error) {
         lastError = error;
-        const retryable = error instanceof AgentError && error.retryable;
-        if (!retryable) break;
+        if (error instanceof AgentError) {
+          if (error.code === "MODEL_RATE_LIMITED") {
+            // try next provider, but surface rate-limited if all rate-limited
+            continue;
+          }
+          if (!error.retryable && error.code !== "NETWORK_UNAVAILABLE" && error.code !== "MODEL_UNAVAILABLE") throw error;
+          // retryable network/model errors -> try next
+          continue;
+        }
+        // unknown error -> try next
+        continue;
       }
     }
-    throw lastError ?? new AgentError({
-      code: "MODEL_UNAVAILABLE",
-      category: "model",
-      message: "all providers failed",
-      recoverable: false,
-      retryable: false,
-    });
+    if (lastError instanceof AgentError && lastError.code === "MODEL_RATE_LIMITED") throw lastError;
+    throw lastError ?? new AgentError({ code: "MODEL_UNAVAILABLE", category: "model", message: "all providers failed", recoverable: true, retryable: false });
   }
 
   messagesToPrompt(messages: ChatMessage[]): string {
     return messages.map((message) => `[${message.role}] ${message.content}`).join("\n");
+  }
+}
+
+function dedupeCapabilities(caps: ProviderCapability[]): ProviderCapability[] { return [...new Set(caps)]; }
+
+/** Anthropic Claude via Messages API — mapped to OpenAI-compatible transport for Phase 3 offline parity. */
+export class AnthropicProvider extends OpenAICompatibleProvider {
+  constructor(config: ProviderConfig, secrets: SecretResolver) {
+    super({ ...config, kind: "anthropic", baseUrl: config.baseUrl ?? "https://api.anthropic.com", capabilities: dedupeCapabilities([...config.capabilities, "vision", "long_context"]), displayName: config.displayName || "Anthropic Claude" }, secrets);
+  }
+}
+export class GoogleProvider extends OpenAICompatibleProvider {
+  constructor(config: ProviderConfig, secrets: SecretResolver) {
+    super({ ...config, kind: "google", baseUrl: config.baseUrl ?? "https://generativelanguage.googleapis.com", capabilities: dedupeCapabilities([...config.capabilities, "vision", "long_context", "embeddings"]), displayName: config.displayName || "Google Gemini" }, secrets);
+  }
+}
+export class VercelGatewayProvider extends OpenAICompatibleProvider {
+  constructor(config: ProviderConfig, secrets: SecretResolver) {
+    super({ ...config, kind: "openai_compatible", baseUrl: config.baseUrl ?? "https://api.vercel.ai", capabilities: dedupeCapabilities([...config.capabilities, "vision", "image_generation", "video_generation"]), displayName: config.displayName || "Vercel Gateway" }, secrets);
+  }
+}
+export class LocalModelProvider implements ModelProvider {
+  readonly config: ProviderConfig;
+  private fallback: ModelProvider;
+  constructor(config: ProviderConfig, fallback: ModelProvider) {
+    this.config = { ...config, kind: "mock", displayName: config.displayName || "Local Model (llama.cpp stub)", baseUrl: null, modelId: config.modelId ?? "local-1", capabilities: dedupeCapabilities([...config.capabilities, "chat", "coding", "long_context"]), enabled: config.enabled ?? false, secretRef: null } as ProviderConfig;
+    this.fallback = fallback;
+  }
+  supports(c: ProviderCapability): boolean { return this.config.capabilities.includes(c); }
+  async chat(req: ChatRequest, signal?: AbortSignal): Promise<ChatResponse> {
+    if (!this.config.enabled) throw new AgentError({ code: "MODEL_UNAVAILABLE", category: "model", message: "local model disabled", recoverable: true, retryable: false });
+    return this.fallback.chat(req, signal);
   }
 }

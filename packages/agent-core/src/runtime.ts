@@ -293,16 +293,19 @@ export class AgentRuntime {
 
         const records = await this.executeStep(runId, step.id, step.title, goal, controller.signal);
 
-        // Verification rule: the step only passes if EVERY required call ran OK.
         const failed = records.find((r) => !r.ok);
         if (failed) {
+          this.noteError(runId, failed.error?.code ?? "UNKNOWN", failed.error?.message ?? "");
           graph.setStatus(step.id, "failed");
+          run.updatedAt = nowIso();
+          void this.persistRun(runId);
+          this.events.emit({ type: "step_failed", runId, stepId: step.id, payload: { error: failed.error } as Record<string, unknown> });
           throw new AgentError({
             code: failed.error?.code ?? "TOOL_TIMEOUT",
             category: failed.error?.category ?? "tool",
             message: `step "${step.title}" failed: ${failed.error?.message ?? "unknown"}`,
-            recoverable: false,
-            retryable: false,
+            recoverable: failed.error?.recoverable ?? false,
+            retryable: failed.error?.retryable ?? false,
             taskId: graph.taskId,
             stepId: step.id,
           });
@@ -310,6 +313,8 @@ export class AgentRuntime {
 
         graph.setStatus(step.id, "completed");
         completedSteps++;
+        run.updatedAt = nowIso();
+        void this.persistRun(runId);
         this.events.emit({ type: "step_completed", runId, stepId: step.id });
       }
 
@@ -595,9 +600,11 @@ export class AgentRuntime {
     this.declaredTitles.set(stepTitle, tools);
   }
 
-  /* repeated action detection ------------------------------------------ */
+  /* repeated action / error detection + context budget -------------- */
 
   private actionCounts = new Map<string, number>();
+  private errorCounts = new Map<string, number>();
+  private readonly contextBudgetTokens = 8000;
 
   private noteAction(runId: string, toolName: string, input: unknown): void {
     const key = `${runId}:${toolName}:${JSON.stringify(input)}`;
@@ -608,6 +615,21 @@ export class AgentRuntime {
         code: "INVALID_TOOL_ARGUMENT",
         category: "tool",
         message: `repeated identical action detected (${toolName}); breaking loop`,
+        recoverable: false,
+        retryable: false,
+      });
+    }
+  }
+
+  private noteError(runId: string, code: string, message: string): void {
+    const key = `${runId}:${code}:${message.slice(0, 120)}`;
+    const n = (this.errorCounts.get(key) ?? 0) + 1;
+    this.errorCounts.set(key, n);
+    if (n > 3) {
+      throw new AgentError({
+        code: "INVALID_TOOL_ARGUMENT",
+        category: "tool",
+        message: `repeated identical error detected (${code}); forcing replan or fail`,
         recoverable: false,
         retryable: false,
       });

@@ -39,3 +39,4 @@ export {
   type PlannerContext,
   type ParsedPlan,
 } from "./model-planner.js";
+export { ContextManager, type ContextBudget, type RelevantChunk } from "./context.js";

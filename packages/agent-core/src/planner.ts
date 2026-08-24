@@ -56,6 +56,49 @@ export class TaskGraph {
     return step;
   }
 
+  /** Split a pending step into two sequential sub-steps; original is cancelled without erasing history. */
+  splitStep(stepId: string, parts: Array<{ title: string; goal?: string; expectedTools?: string[]; acceptanceCriteria?: string[] }>): TaskStep[] {
+    const original = this.steps.find((s) => s.id === stepId);
+    if (!original) throw new Error(`unknown step ${stepId}`);
+    if (original.status !== "pending") throw new Error(`only pending steps can be split, got ${original.status}`);
+    this.setStatus(stepId, "cancelled");
+    const created: TaskStep[] = [];
+    let prevId = stepId;
+    for (const part of parts) {
+      const s = this.addStep({ ...part, dependencies: [prevId, ...(part as unknown as { dependencies?: string[] }).dependencies ?? []] });
+      // Keep dependency on original's dependencies for first part
+      if (created.length === 0) s.dependencies = [...new Set([...original.dependencies, ...s.dependencies.filter((d) => d !== stepId)])];
+      created.push(s);
+      prevId = s.id;
+    }
+    return created;
+  }
+
+  /** Reorder only pending future steps (by id order); never touches completed/failed. */
+  reorderPending(newOrderIds: string[]): void {
+    const pending = this.pending();
+    const pendingIds = new Set(pending.map((s) => s.id));
+    if (newOrderIds.length !== pending.length || !newOrderIds.every((id) => pendingIds.has(id))) throw new Error("reorder must include exactly all pending ids");
+    const map = new Map(this.steps.map((s) => [s.id, s] as const));
+    const reorderedPending = newOrderIds.map((id) => map.get(id)!);
+    const completed = this.steps.filter((s) => s.status !== "pending");
+    this.steps = [...completed, ...reorderedPending];
+  }
+
+  /** Return up to `limit` runnable steps in parallel (dependency-free batch). */
+  getRunnableBatch(limit = 3): TaskStep[] {
+    const runnable: TaskStep[] = [];
+    for (const step of this.pending()) {
+      const depsOk = step.dependencies.every((depId) => {
+        const dep = this.steps.find((c) => c.id === depId);
+        return !dep || dep.status === "completed" || dep.status === "skipped";
+      });
+      if (depsOk) runnable.push(step);
+      if (runnable.length >= limit) break;
+    }
+    return runnable;
+  }
+
   /** Replanning: insert new future steps after a given step without erasing history. */
   replan(afterStepId: string, additions: Array<Parameters<TaskGraph["addStep"]>[0]>): TaskStep[] {
     const created = additions.map((addition) => this.addStep({ ...addition, dependencies: [afterStepId, ...(addition.dependencies ?? [])] }));
@@ -70,6 +113,8 @@ export class TaskGraph {
   setStatus(stepId: string, status: StepState): void {
     const step = this.steps.find((candidate) => candidate.id === stepId);
     if (!step) throw new Error(`unknown step ${stepId}`);
+    // Never delete completed history: disallow moving completed back to pending
+    if (step.status === "completed" && status === "pending") throw new Error("completed history cannot be reset to pending");
     step.status = status;
     step.updatedAt = this.now();
     if (status === "running") step.attempt += 1;
