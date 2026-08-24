@@ -4,7 +4,7 @@ import { Button, Card, Screen, Title, ui } from "../components/AppUI";
 import { useAgentRuntime } from "../services/AppAgentContext";
 import type { ProfileName } from "@agentmoataz/agent-core";
 
-const profiles: ProfileName[] = ["SAFE", "BALANCED", "AUTONOMOUS", "CUSTOM"];
+const profiles: ProfileName[] = ["SAFE", "BALANCED", "AUTONOMOUS"];
 
 export default function Settings() {
   const { runtime, snapshot } = useAgentRuntime();
@@ -32,6 +32,7 @@ export default function Settings() {
             />
           ))}
         </View>
+        <Text style={ui.muted}>Custom per-capability overrides are intentionally hidden until a complete editor is available.</Text>
       </Card>
       <Card>
         <Text style={ui.heading}>Local state</Text>
