@@ -1,0 +1,116 @@
+name: Android Production Release
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    env:
+      CI: "1"
+      RELEASE_KEYSTORE_BASE64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
+      RELEASE_STORE_PASSWORD: ${{ secrets.RELEASE_STORE_PASSWORD }}
+      RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
+      RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+
+      - name: Require production signing secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          for name in RELEASE_KEYSTORE_BASE64 RELEASE_STORE_PASSWORD RELEASE_KEY_ALIAS RELEASE_KEY_PASSWORD; do
+            if [ -z "${!name:-}" ]; then
+              echo "::error::$name is required for a production release"
+              exit 1
+            fi
+          done
+          printf '%s' "$RELEASE_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/agentmoataz-release.keystore"
+          test -s "$RUNNER_TEMP/agentmoataz-release.keystore"
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Quality gates
+        run: |
+          pnpm lint
+          pnpm typecheck
+          pnpm check:android-imports
+          pnpm test
+
+      - name: Expo prebuild Android
+        working-directory: apps/android
+        run: pnpm exec expo prebuild --platform android --clean
+
+      - name: Verify Android 8+ arm64 policy
+        working-directory: apps/android/android
+        run: |
+          grep -q '^android.minSdkVersion=26$' gradle.properties
+          grep -q '^reactNativeArchitectures=arm64-v8a$' gradle.properties
+          grep -q '^android.kotlinVersion=1.9.25$' gradle.properties
+
+      - name: Build production-signed APK and AAB
+        working-directory: apps/android/android
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x gradlew
+          ./gradlew assembleRelease bundleRelease --no-daemon --stacktrace \
+            -Pandroid.injected.signing.store.file="$RUNNER_TEMP/agentmoataz-release.keystore" \
+            -Pandroid.injected.signing.store.password="$RELEASE_STORE_PASSWORD" \
+            -Pandroid.injected.signing.key.alias="$RELEASE_KEY_ALIAS" \
+            -Pandroid.injected.signing.key.password="$RELEASE_KEY_PASSWORD"
+
+      - name: Verify APK compatibility, ABI and signature
+        working-directory: apps/android/android
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK="app/build/outputs/apk/release/app-release.apk"
+          AAB="app/build/outputs/bundle/release/app-release.aab"
+          test -s "$APK"
+          test -s "$AAB"
+          AAPT="$(find "$ANDROID_HOME/build-tools" -type f -name aapt | sort -V | tail -n 1)"
+          APKSIGNER="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -n 1)"
+          "$AAPT" dump badging "$APK" | tee "$RUNNER_TEMP/apk-badging.txt"
+          grep -q "sdkVersion:'26'" "$RUNNER_TEMP/apk-badging.txt"
+          unzip -l "$APK" | tee "$RUNNER_TEMP/apk-files.txt"
+          grep -q 'lib/arm64-v8a/' "$RUNNER_TEMP/apk-files.txt"
+          if grep -Eq 'lib/(armeabi-v7a|x86|x86_64)/' "$RUNNER_TEMP/apk-files.txt"; then
+            echo "Unexpected non-arm64 native ABI in release APK" >&2
+            exit 1
+          fi
+          "$APKSIGNER" verify --verbose --print-certs "$APK"
+          sha256sum "$APK" > "$APK.sha256"
+          sha256sum "$AAB" > "$AAB.sha256"
+
+      - name: Upload production release artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: agentmoataz-android8plus-arm64-production
+          path: |
+            apps/android/android/app/build/outputs/apk/release/app-release.apk
+            apps/android/android/app/build/outputs/apk/release/app-release.apk.sha256
+            apps/android/android/app/build/outputs/bundle/release/app-release.aab
+            apps/android/android/app/build/outputs/bundle/release/app-release.aab.sha256
+          if-no-files-found: error
