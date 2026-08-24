@@ -78,7 +78,7 @@ describe("OpenAICompatibleProvider", () => {
   });
 
   it("preserves a base URL path even without a trailing slash", async () => {
-    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit): Promise<Response> =>
+    const fetchMock = vi.fn(async (_input: unknown, _init?: RequestInit): Promise<Response> =>
       new Response(JSON.stringify({
         choices: [{ message: { content: "OK" }, finish_reason: "stop" }],
       }), { status: 200, headers: { "content-type": "application/json" } })
