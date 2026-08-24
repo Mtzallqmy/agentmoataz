@@ -114,7 +114,7 @@ jobs:
             exit 1
           fi
           "$APKSIGNER" verify --verbose --print-certs "$APK"
-          sha256sum "$APK" | tee apps/android-release.sha256
+          sha256sum "$APK" | tee "$APK.sha256"
 
       - name: Upload installable arm64 release APK
         uses: actions/upload-artifact@v4
@@ -122,5 +122,5 @@ jobs:
           name: agentmoataz-android8plus-arm64-release-ci-signed
           path: |
             apps/android/android/app/build/outputs/apk/release/app-release.apk
-            apps/android/android/apps/android-release.sha256
+            apps/android/android/app/build/outputs/apk/release/app-release.apk.sha256
           if-no-files-found: error
