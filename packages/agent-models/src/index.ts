@@ -17,10 +17,6 @@ export interface ModelProvider {
   chat(req: ChatRequest, signal?: AbortSignal): Promise<ChatResponse>;
 }
 
-/* ------------------------------------------------------------------ */
-/* MockProvider — deterministic, no network. Used in tests & offline.  */
-/* ------------------------------------------------------------------ */
-
 export interface MockScriptEntry {
   /** Substring matched against the last user message to select this reply. */
   match: string;
@@ -44,9 +40,7 @@ export class MockProvider implements ModelProvider {
     priority?: number;
   }) {
     this.replies = options?.replies ?? [];
-    this.fallback =
-      options?.fallback ??
-      "MOCK: I reviewed the request. Proceed with the current plan step and use available tools.";
+    this.fallback = options?.fallback ?? "MOCK: I reviewed the request. Proceed with the current plan step and use available tools.";
     this.config = {
       id: options?.id ?? "mock",
       kind: "mock",
@@ -60,9 +54,7 @@ export class MockProvider implements ModelProvider {
     };
   }
 
-  get calls(): number {
-    return this.callCount;
-  }
+  get calls(): number { return this.callCount; }
 
   supports(capability: ProviderCapability): boolean {
     return this.config.capabilities.includes(capability);
@@ -83,17 +75,10 @@ export class MockProvider implements ModelProvider {
         })),
       };
     }
-    // Deterministic output derived from input when no script matches.
-    const content = entry
-      ? entry.reply
-      : `${this.fallback}\n[echo of goal]: ${lastUser?.content.slice(0, 200) ?? ""}`;
+    const content = entry ? entry.reply : `${this.fallback}\n[echo of goal]: ${lastUser?.content.slice(0, 200) ?? ""}`;
     return { content, finishReason: "stop" };
   }
 }
-
-/* ------------------------------------------------------------------ */
-/* OpenAI-compatible adapter (OpenAI, OpenRouter, Groq, LM Studio...)   */
-/* ------------------------------------------------------------------ */
 
 export interface SecretResolver {
   /** Resolve a secretRef to the actual credential, or null. */
@@ -114,6 +99,15 @@ export class OpenAICompatibleProvider implements ModelProvider {
         retryable: false,
       });
     }
+    if (!config.modelId?.trim()) {
+      throw new AgentError({
+        code: "MODEL_UNAVAILABLE",
+        category: "model",
+        message: `provider ${config.id} requires modelId`,
+        recoverable: true,
+        retryable: false,
+      });
+    }
     this.config = config;
     this.secrets = secrets;
   }
@@ -124,17 +118,26 @@ export class OpenAICompatibleProvider implements ModelProvider {
 
   async chat(req: ChatRequest, signal?: AbortSignal): Promise<ChatResponse> {
     const key = this.config.secretRef ? await this.secrets.resolve(this.config.secretRef) : null;
+    if (this.config.secretRef && !key) {
+      throw new AgentError({
+        code: "SECRET_UNAVAILABLE",
+        category: "secret",
+        message: `credential ${this.config.secretRef} is unavailable`,
+        recoverable: true,
+        retryable: false,
+      });
+    }
 
     const body: Record<string, unknown> = {
       model: this.config.modelId,
       messages: req.messages.map(toOpenAIMessage),
-      temperature: req.temperature,
-      max_tokens: req.maxTokens,
+      ...(req.temperature !== undefined ? { temperature: req.temperature } : {}),
+      ...(req.maxTokens !== undefined ? { max_tokens: req.maxTokens } : {}),
       ...(req.tools?.length
         ? {
-            tools: req.tools.map((t) => ({
+            tools: req.tools.map((tool) => ({
               type: "function",
-              function: { name: t.name, description: t.description, parameters: t.parameters },
+              function: { name: tool.name, description: tool.description, parameters: tool.parameters },
             })),
           }
         : {}),
@@ -142,7 +145,7 @@ export class OpenAICompatibleProvider implements ModelProvider {
 
     let res: Response;
     try {
-      res = await fetch(new URL("chat/completions", this.config.baseUrl!), {
+      res = await fetch(providerEndpoint(this.config.baseUrl!, "chat/completions"), {
         method: "POST",
         headers: {
           "content-type": "application/json",
@@ -151,14 +154,17 @@ export class OpenAICompatibleProvider implements ModelProvider {
         body: JSON.stringify(body),
         signal,
       });
-    } catch (e) {
+    } catch (error) {
+      if (signal?.aborted) {
+        throw new AgentError({ code: "TOOL_CANCELLED", category: "tool", message: "model request cancelled", recoverable: true, retryable: false });
+      }
       throw new AgentError({
         code: "NETWORK_UNAVAILABLE",
         category: "network",
         message: `request to ${this.config.displayName} failed`,
         recoverable: true,
         retryable: true,
-        technicalCause: e instanceof Error ? e.message : String(e),
+        technicalCause: error instanceof Error ? error.message : String(error),
       });
     }
 
@@ -182,27 +188,24 @@ export class OpenAICompatibleProvider implements ModelProvider {
       });
     }
 
-    const bodyJson = (await res.json()) as {
+    const responseJson = (await res.json()) as {
       choices?: Array<{
         message?: {
           content?: string | null;
-          tool_calls?: Array<{
-            id?: string;
-            function?: { name?: string; arguments?: string };
-          }>;
+          tool_calls?: Array<{ id?: string; function?: { name?: string; arguments?: string } }>;
         };
         finish_reason?: string;
       }>;
     };
-    const choice = bodyJson.choices?.[0];
+    const choice = responseJson.choices?.[0];
     const message = choice?.message;
     const rawCalls = message?.tool_calls ?? [];
     const toolCalls = rawCalls
-      .filter((c) => c.function?.name)
-      .map((c, i) => ({
-        id: c.id ?? `call_${i}`,
-        name: c.function!.name!,
-        argumentsJson: c.function?.arguments ?? "{}",
+      .filter((call) => call.function?.name)
+      .map((call, index) => ({
+        id: call.id ?? `call_${index}`,
+        name: call.function!.name!,
+        argumentsJson: call.function?.arguments ?? "{}",
       }));
 
     return {
@@ -218,6 +221,11 @@ export class OpenAICompatibleProvider implements ModelProvider {
       ...(toolCalls.length > 0 ? { toolCalls } : {}),
     };
   }
+}
+
+function providerEndpoint(baseUrl: string, relativePath: string): URL {
+  const normalized = baseUrl.endsWith("/") ? baseUrl : `${baseUrl}/`;
+  return new URL(relativePath.replace(/^\/+/, ""), normalized);
 }
 
 function toOpenAIMessage(message: ChatMessage): Record<string, unknown> {
@@ -243,10 +251,6 @@ function toOpenAIMessage(message: ChatMessage): Record<string, unknown> {
   return { role: message.role, content: message.content, ...(message.name ? { name: message.name } : {}) };
 }
 
-/* ------------------------------------------------------------------ */
-/* Router                                                              */
-/* ------------------------------------------------------------------ */
-
 export interface RoutePreference {
   requiredCapability: ProviderCapability;
   preferLocal?: boolean;
@@ -256,9 +260,7 @@ export class ProviderRouter {
   constructor(private providers: ModelProvider[]) {}
 
   route(pref: RoutePreference): ModelProvider {
-    const candidates = this.providers.filter(
-      (p) => p.config.enabled && p.supports(pref.requiredCapability)
-    );
+    const candidates = this.providers.filter((provider) => provider.config.enabled && provider.supports(pref.requiredCapability));
     if (candidates.length === 0) {
       throw new AgentError({
         code: "CAPABILITY_UNAVAILABLE",
@@ -268,21 +270,20 @@ export class ProviderRouter {
         retryable: false,
       });
     }
-    const sorted = candidates.sort((a, b) => b.config.priority - a.config.priority);
-    return sorted[0]!;
+    return candidates.sort((a, b) => b.config.priority - a.config.priority)[0]!;
   }
 
   async chatWithFallback(pref: RoutePreference, req: ChatRequest): Promise<ChatResponse> {
     const candidates = this.providers
-      .filter((p) => p.config.enabled && p.supports(pref.requiredCapability))
+      .filter((provider) => provider.config.enabled && provider.supports(pref.requiredCapability))
       .sort((a, b) => b.config.priority - a.config.priority);
     let lastError: unknown;
-    for (const p of candidates) {
+    for (const provider of candidates) {
       try {
-        return await p.chat(req);
-      } catch (e) {
-        lastError = e;
-        const retryable = e instanceof AgentError && e.retryable;
+        return await provider.chat(req);
+      } catch (error) {
+        lastError = error;
+        const retryable = error instanceof AgentError && error.retryable;
         if (!retryable) break;
       }
     }
@@ -296,6 +297,6 @@ export class ProviderRouter {
   }
 
   messagesToPrompt(messages: ChatMessage[]): string {
-    return messages.map((m) => `[${m.role}] ${m.content}`).join("\n");
+    return messages.map((message) => `[${message.role}] ${message.content}`).join("\n");
   }
 }

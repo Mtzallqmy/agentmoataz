@@ -16,18 +16,14 @@ export class TaskGraph {
     private readonly now: () => string = () => new Date().toISOString()
   ) {}
 
-  get all(): readonly TaskStep[] {
-    return this.steps;
-  }
+  get all(): readonly TaskStep[] { return this.steps; }
 
-  pending(): TaskStep[] {
-    return this.steps.filter((s) => s.status === "pending");
-  }
+  pending(): TaskStep[] { return this.steps.filter((step) => step.status === "pending"); }
 
   nextRunnable(): TaskStep | null {
     for (const step of this.pending()) {
       const depsOk = step.dependencies.every((depId) => {
-        const dep = this.steps.find((s) => s.id === depId);
+        const dep = this.steps.find((candidate) => candidate.id === depId);
         return !dep || dep.status === "completed" || dep.status === "skipped";
       });
       if (depsOk) return step;
@@ -62,29 +58,24 @@ export class TaskGraph {
 
   /** Replanning: insert new future steps after a given step without erasing history. */
   replan(afterStepId: string, additions: Array<Parameters<TaskGraph["addStep"]>[0]>): TaskStep[] {
-    const created = additions.map((a) => this.addStep({ ...a, dependencies: [afterStepId, ...(a.dependencies ?? [])] }));
-    // cancel other still-pending steps that came after the failure point and are not deps of new plan
-    const afterIdx = this.steps.findIndex((s) => s.id === afterStepId);
+    const created = additions.map((addition) => this.addStep({ ...addition, dependencies: [afterStepId, ...(addition.dependencies ?? [])] }));
+    const afterIdx = this.steps.findIndex((step) => step.id === afterStepId);
     for (let i = afterIdx + 1; i < this.steps.length; i++) {
-      const s = this.steps[i]!;
-      if (s.status === "pending" && !created.some((c) => c.id === s.id)) {
-        this.setStatus(s.id, "cancelled");
-      }
+      const step = this.steps[i]!;
+      if (step.status === "pending" && !created.some((candidate) => candidate.id === step.id)) this.setStatus(step.id, "cancelled");
     }
     return created;
   }
 
   setStatus(stepId: string, status: StepState): void {
-    const step = this.steps.find((s) => s.id === stepId);
+    const step = this.steps.find((candidate) => candidate.id === stepId);
     if (!step) throw new Error(`unknown step ${stepId}`);
     step.status = status;
     step.updatedAt = this.now();
     if (status === "running") step.attempt += 1;
   }
 
-  completedCount(): number {
-    return this.steps.filter((s) => s.status === "completed").length;
-  }
+  completedCount(): number { return this.steps.filter((step) => step.status === "completed").length; }
 }
 
 export interface PlanInput {
@@ -95,14 +86,29 @@ export interface PlanInput {
 export interface PlannedStep {
   title: string;
   goal?: string;
+  /** Dependencies are prior plan-step indexes represented as strings. */
+  dependencies?: string[];
   expectedTools?: string[];
+  acceptanceCriteria?: string[];
 }
 
-/** Deterministic default planner used when no model-driven planner is configured. */
+/** Deterministic fallback planner used when no model-driven planner is configured. */
 export function defaultPlan(input: PlanInput): PlannedStep[] {
   return [
-    { title: "Understand goal and gather context", goal: input.goal },
-    { title: "Execute primary work", expectedTools: ["write_file", "read_file"] },
-    { title: "Verify results", expectedTools: ["read_file"] },
+    {
+      title: "Understand goal and gather context",
+      goal: input.goal,
+      acceptanceCriteria: ["Relevant workspace context has been inspected before mutation"],
+    },
+    {
+      title: "Execute primary work",
+      expectedTools: ["write_file", "read_file"],
+      acceptanceCriteria: ["Requested project changes are implemented through workspace tools"],
+    },
+    {
+      title: "Verify results",
+      expectedTools: ["read_file"],
+      acceptanceCriteria: ["Important generated or modified files are read back and checked"],
+    },
   ];
 }

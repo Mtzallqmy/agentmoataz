@@ -13,8 +13,6 @@ jobs:
       - uses: actions/checkout@v4
 
       - uses: pnpm/action-setup@v4
-        with:
-          version: 11
 
       - uses: actions/setup-node@v4
         with:
@@ -38,3 +36,91 @@ jobs:
 
       - name: Test (non-watch)
         run: pnpm test
+
+  android-release-smoke:
+    needs: checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      CI: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Expo prebuild Android
+        working-directory: apps/android
+        run: pnpm exec expo prebuild --platform android --clean
+
+      - name: Verify generated release policy
+        working-directory: apps/android/android
+        run: |
+          grep -q '^android.minSdkVersion=26$' gradle.properties
+          grep -q '^reactNativeArchitectures=arm64-v8a$' gradle.properties
+          grep -q '^android.kotlinVersion=1.9.25$' gradle.properties
+
+      - name: Create temporary CI signing key
+        run: |
+          keytool -genkeypair -noprompt \
+            -storetype PKCS12 \
+            -keystore "$RUNNER_TEMP/agentmoataz-ci.p12" \
+            -storepass agentmoataz-ci \
+            -keypass agentmoataz-ci \
+            -alias agentmoataz \
+            -keyalg RSA \
+            -keysize 2048 \
+            -validity 3650 \
+            -dname "CN=AgentMoataz CI,O=AgentMoataz,C=US"
+
+      - name: Assemble signed arm64 release APK
+        working-directory: apps/android/android
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleRelease --no-daemon --stacktrace \
+            -Pandroid.injected.signing.store.file="$RUNNER_TEMP/agentmoataz-ci.p12" \
+            -Pandroid.injected.signing.store.password=agentmoataz-ci \
+            -Pandroid.injected.signing.key.alias=agentmoataz \
+            -Pandroid.injected.signing.key.password=agentmoataz-ci
+
+      - name: Verify release APK policy and signature
+        working-directory: apps/android/android
+        run: |
+          APK="app/build/outputs/apk/release/app-release.apk"
+          test -s "$APK"
+          AAPT="$(find "$ANDROID_HOME/build-tools" -type f -name aapt | sort -V | tail -n 1)"
+          APKSIGNER="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -n 1)"
+          test -x "$AAPT"
+          test -x "$APKSIGNER"
+          "$AAPT" dump badging "$APK" | tee "$RUNNER_TEMP/apk-badging.txt"
+          grep -q "sdkVersion:'26'" "$RUNNER_TEMP/apk-badging.txt"
+          unzip -l "$APK" | tee "$RUNNER_TEMP/apk-files.txt"
+          grep -q 'lib/arm64-v8a/' "$RUNNER_TEMP/apk-files.txt"
+          if grep -Eq 'lib/(armeabi-v7a|x86|x86_64)/' "$RUNNER_TEMP/apk-files.txt"; then
+            echo "Unexpected non-arm64 native ABI in release APK" >&2
+            exit 1
+          fi
+          "$APKSIGNER" verify --verbose --print-certs "$APK"
+          sha256sum "$APK" | tee "$APK.sha256"
+
+      - name: Upload installable arm64 release APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: agentmoataz-android8plus-arm64-release-ci-signed
+          path: |
+            apps/android/android/app/build/outputs/apk/release/app-release.apk
+            apps/android/android/app/build/outputs/apk/release/app-release.apk.sha256
+          if-no-files-found: error

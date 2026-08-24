@@ -9,11 +9,18 @@
     "newArchEnabled": true,
     "android": {
       "package": "dev.agentmoataz.app",
-      "foregroundService": true
+      "versionCode": 1,
+      "allowBackup": false,
+      "permissions": [
+        "android.permission.POST_NOTIFICATIONS",
+        "android.permission.FOREGROUND_SERVICE",
+        "android.permission.FOREGROUND_SERVICE_DATA_SYNC"
+      ]
     },
     "plugins": [
       "expo-router",
-      "expo-secure-store"
+      "expo-secure-store",
+      "./plugins/withKotlinVersion"
     ],
     "experiments": {
       "typedRoutes": true
