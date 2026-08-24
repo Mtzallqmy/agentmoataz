@@ -1,4 +1,4 @@
-import type { CryptoAdapter, FileSystemAdapter, PathAdapter, PlatformAdapters } from "@agentmoataz/agent-platform";
+import { utf8Encode, type CryptoAdapter, type FileSystemAdapter, type PathAdapter, type PlatformAdapters } from "@agentmoataz/agent-platform";
 import { AgentError, type StructuredError } from "@agentmoataz/agent-protocol";
 import { safeJoin, maxFileBytes } from "./paths.js";
 import JSZip from "jszip";
@@ -65,7 +65,7 @@ export class Workspace {
   }
 
   async writeFile(relativePath: string, content: string): Promise<void> {
-    if (new TextEncoder().encode(content).byteLength > maxFileBytes()) {
+    if (utf8Encode(content).byteLength > maxFileBytes()) {
       throw new AgentError({ code: "INVALID_TOOL_ARGUMENT", category: "workspace", message: `file exceeds ${maxFileBytes()} byte limit`, recoverable: false, retryable: false });
     }
     await this.fs.writeText(this.absolute(relativePath), content);
