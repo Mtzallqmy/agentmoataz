@@ -212,6 +212,12 @@ importers:
         specifier: ^3.25.76
         version: 3.25.76
 
+  packages/agent-sandbox:
+    dependencies:
+      '@agentmoataz/agent-protocol':
+        specifier: workspace:*
+        version: link:../agent-protocol
+
   packages/agent-skills:
     dependencies:
       '@agentmoataz/agent-platform':

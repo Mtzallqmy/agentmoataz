@@ -1,0 +1,26 @@
+﻿{
+    "validation":  [
+                       "Original failing condition is explicitly addressed"
+                   ],
+    "prerequisites":  [
+
+                      ],
+    "purpose":  "Diagnose and repair TypeScript project errors.",
+    "triggers":  [
+                     "typescript error",
+                     "fix types"
+                 ],
+    "steps":  [
+                  "Inspect exact error",
+                  "Apply smallest fix",
+                  "Diff or re-read",
+                  "Run validation"
+              ],
+    "name":  "repair-typescript-project",
+    "allowedTools":  [
+                         "read_file",
+                         "write_file",
+                         "replace_text"
+                     ],
+    "recovery":  "restore latest checkpoint"
+}

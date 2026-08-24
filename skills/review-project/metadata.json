@@ -1,0 +1,26 @@
+﻿{
+    "validation":  [
+                       "Verdict is grounded in observed files"
+                   ],
+    "prerequisites":  [
+
+                      ],
+    "purpose":  "Review a project for correctness, security and completeness.",
+    "triggers":  [
+                     "review",
+                     "audit"
+                 ],
+    "steps":  [
+                  "Collect diff and file list",
+                  "Check acceptance criteria",
+                  "Scan for secrets",
+                  "Report issues"
+              ],
+    "name":  "review-project",
+    "allowedTools":  [
+                         "list_tree",
+                         "read_file",
+                         "diff_files"
+                     ],
+    "recovery":  "restore latest checkpoint"
+}

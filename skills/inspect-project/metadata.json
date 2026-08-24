@@ -1,0 +1,25 @@
+﻿{
+    "validation":  [
+                       "Claims are grounded in files actually read"
+                   ],
+    "prerequisites":  [
+
+                      ],
+    "purpose":  "Inspect an existing project before making changes.",
+    "triggers":  [
+                     "inspect",
+                     "review project"
+                 ],
+    "steps":  [
+                  "List the workspace",
+                  "Read manifests",
+                  "Summarize stack and risks"
+              ],
+    "name":  "inspect-project",
+    "allowedTools":  [
+                         "list_tree",
+                         "read_file",
+                         "search_text"
+                     ],
+    "recovery":  "restore latest checkpoint"
+}

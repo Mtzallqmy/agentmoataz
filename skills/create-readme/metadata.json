@@ -1,0 +1,26 @@
+﻿{
+    "validation":  [
+                       "README reflects actual files"
+                   ],
+    "prerequisites":  [
+
+                      ],
+    "purpose":  "Create or improve README.md with accurate project documentation.",
+    "triggers":  [
+                     "readme",
+                     "documentation"
+                 ],
+    "steps":  [
+                  "Inspect project structure",
+                  "Generate sections",
+                  "Write README.md",
+                  "Verify file exists"
+              ],
+    "name":  "create-readme",
+    "allowedTools":  [
+                         "list_tree",
+                         "read_file",
+                         "write_file"
+                     ],
+    "recovery":  "restore latest checkpoint"
+}

@@ -182,6 +182,46 @@ export function createBuiltinSkills(): LoadedSkill[] {
       allowedTools: ["list_tree", "read_file", "hash_file", "create_zip"],
       validation: ["No .env, node_modules, .agent or .git data is exported"],
     }),
+    builtin({
+      name: "create-readme",
+      purpose: "Create or improve README.md with accurate project documentation.",
+      triggers: ["readme", "documentation", "توثيق", "انشئ readme"],
+      steps: ["Inspect project structure and manifest", "Generate sections: purpose, setup, usage, scripts", "Write README.md via workspace tool", "Verify file exists"],
+      allowedTools: ["list_tree", "read_file", "write_file", "search_text"],
+      validation: ["README reflects actual files, not hallucinated content"],
+    }),
+    builtin({
+      name: "review-project",
+      purpose: "Review a project for correctness, security and completeness.",
+      triggers: ["review", "audit", "مراجعة", "راجع المشروع"],
+      steps: ["Collect diff and file list", "Check acceptance criteria", "Scan for secrets / unsafe patterns", "Report issues and required fixes"],
+      allowedTools: ["list_tree", "read_file", "search_text", "diff_files", "hash_file"],
+      validation: ["Review verdict is grounded in observed files"],
+    }),
+    builtin({
+      name: "create-simple-game",
+      purpose: "Create a simple browser or Expo game with incremental verification.",
+      triggers: ["game", "لعبة", "create game"],
+      steps: ["Define minimal game loop and controls", "Create HTML/TS or Expo screen", "Test basic interaction", "Package if requested"],
+      allowedTools: ["list_tree", "write_file", "read_file", "create_directory", "create_zip"],
+      validation: ["Game has playable entry point and no untrusted code execution"],
+    }),
+    builtin({
+      name: "create-api-client",
+      purpose: "Create a typed API client with error handling and tests.",
+      triggers: ["api client", "sdk", "fetch wrapper", "انشئ api"],
+      steps: ["Inspect target API spec or baseUrl", "Define typed client with zod validation", "Handle timeouts and retries", "Verify with read_file and optional http_get"],
+      allowedTools: ["read_file", "write_file", "search_text", "http_get", "create_directory"],
+      validation: ["Client correctly handles NETWORK_UNAVAILABLE and invalid arguments"],
+    }),
+    builtin({
+      name: "review-security",
+      purpose: "Audit project for security issues: secrets, traversal, injection.",
+      triggers: ["security review", "audit security", "مراجعة أمنية"],
+      steps: ["Search for secrets and unsafe path handling", "Check workspace escape and ZIP safety", "Verify no external content overrides policy", "Report findings with severity"],
+      allowedTools: ["search_text", "read_file", "list_tree", "hash_file"],
+      validation: ["No secrets are exfiltrated; findings are evidence-based"],
+    }),
   ];
 }
 

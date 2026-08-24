@@ -1,0 +1,26 @@
+﻿{
+    "validation":  [
+                       "No secrets are exfiltrated"
+                   ],
+    "prerequisites":  [
+
+                      ],
+    "purpose":  "Audit project for security issues: secrets, traversal, injection.",
+    "triggers":  [
+                     "security review",
+                     "audit security"
+                 ],
+    "steps":  [
+                  "Search for secrets",
+                  "Check workspace escape and ZIP safety",
+                  "Verify no external content overrides policy",
+                  "Report findings"
+              ],
+    "name":  "review-security",
+    "allowedTools":  [
+                         "search_text",
+                         "read_file",
+                         "list_tree"
+                     ],
+    "recovery":  "restore latest checkpoint"
+}

@@ -1,0 +1,26 @@
+﻿{
+    "validation":  [
+                       "Client handles NETWORK_UNAVAILABLE"
+                   ],
+    "prerequisites":  [
+
+                      ],
+    "purpose":  "Create a typed API client with error handling and tests.",
+    "triggers":  [
+                     "api client",
+                     "sdk"
+                 ],
+    "steps":  [
+                  "Inspect target API spec",
+                  "Define typed client with zod",
+                  "Handle timeouts and retries",
+                  "Verify"
+              ],
+    "name":  "create-api-client",
+    "allowedTools":  [
+                         "read_file",
+                         "write_file",
+                         "http_get"
+                     ],
+    "recovery":  "restore latest checkpoint"
+}

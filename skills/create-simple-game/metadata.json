@@ -1,0 +1,26 @@
+﻿{
+    "validation":  [
+                       "Game has playable entry point"
+                   ],
+    "prerequisites":  [
+
+                      ],
+    "purpose":  "Create a simple browser or Expo game with incremental verification.",
+    "triggers":  [
+                     "game",
+                     "create game"
+                 ],
+    "steps":  [
+                  "Define minimal game loop",
+                  "Create screen",
+                  "Test interaction",
+                  "Package if requested"
+              ],
+    "name":  "create-simple-game",
+    "allowedTools":  [
+                         "write_file",
+                         "read_file",
+                         "create_zip"
+                     ],
+    "recovery":  "restore latest checkpoint"
+}

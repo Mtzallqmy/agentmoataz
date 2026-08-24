@@ -19,6 +19,7 @@ export default function RootLayout() {
         <Stack.Screen name="tools" options={{ title: "Tools" }} />
         <Stack.Screen name="memory" options={{ title: "Memory" }} />
         <Stack.Screen name="skills" options={{ title: "Skills" }} />
+        <Stack.Screen name="browser" options={{ title: "Browser" }} />
         <Stack.Screen name="settings" options={{ title: "Settings" }} />
       </Stack>
       </AppAgentProvider>

@@ -1,0 +1,28 @@
+﻿{
+    "validation":  [
+                       "TypeScript/config files are internally consistent"
+                   ],
+    "prerequisites":  [
+
+                      ],
+    "purpose":  "Create or modify an Expo + TypeScript project using strict, small verified changes.",
+    "triggers":  [
+                     "expo",
+                     "react native"
+                 ],
+    "steps":  [
+                  "Inspect or create manifest",
+                  "Implement requested screens/components",
+                  "Verify imports/config",
+                  "Package only when requested"
+              ],
+    "name":  "create-expo-project",
+    "allowedTools":  [
+                         "list_tree",
+                         "read_file",
+                         "write_file",
+                         "create_directory",
+                         "create_zip"
+                     ],
+    "recovery":  "restore latest checkpoint"
+}

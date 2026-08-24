@@ -1,0 +1,26 @@
+﻿{
+    "validation":  [
+                       "No .env, node_modules, .agent or .git data is exported"
+                   ],
+    "prerequisites":  [
+
+                      ],
+    "purpose":  "Prepare a clean project artifact without secrets or caches.",
+    "triggers":  [
+                     "zip",
+                     "package project"
+                 ],
+    "steps":  [
+                  "Verify contents",
+                  "Exclude secrets/caches",
+                  "Create ZIP",
+                  "Record checksum"
+              ],
+    "name":  "package-project",
+    "allowedTools":  [
+                         "list_tree",
+                         "hash_file",
+                         "create_zip"
+                     ],
+    "recovery":  "restore latest checkpoint"
+}
