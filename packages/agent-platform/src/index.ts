@@ -189,7 +189,7 @@ function normalizePortable(value: string): string {
   const normalizedSlashes = value.replace(/\\/g, "/");
   const match = normalizedSlashes.match(/^([a-zA-Z][a-zA-Z0-9+.-]*:\/\/)(.*)$/s);
   const scheme = match?.[1] ?? "";
-  const body = match ? match[2] : normalizedSlashes;
+  const body = match?.[2] ?? normalizedSlashes;
   const leadingSlash = body.startsWith("/");
   const out: string[] = [];
   for (const part of body.split("/")) {
