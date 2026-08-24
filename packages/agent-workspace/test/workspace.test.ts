@@ -5,13 +5,14 @@ import path from "node:path";
 import fsp from "node:fs/promises";
 import { Workspace } from "../src/index.js";
 import { safeJoin } from "../src/paths.js";
+import { nodePlatform } from "@agentmoataz/agent-platform/node";
 
 let tmp: string;
 let ws: Workspace;
 
 beforeAll(async () => {
   tmp = await fsp.mkdtemp(path.join(os.tmpdir(), "ws-test-"));
-  ws = new Workspace(tmp);
+  ws = new Workspace(tmp, nodePlatform);
 });
 
 afterAll(async () => {
@@ -27,16 +28,16 @@ describe("path security", () => {
     "C:\\Windows\\system32\\config.sys",
     "a/../..",
   ])("blocks traversal attempt %j", (attempt) => {
-    expect(() => safeJoin(tmp, attempt)).toThrow(/escapes project root|absolute/);
+    expect(() => safeJoin(tmp, attempt, nodePlatform.path)).toThrow(/escapes project root|absolute/);
   });
 
   it("allows normal relative paths", () => {
-    const p = safeJoin(tmp, "src/components/Button.tsx");
+    const p = safeJoin(tmp, "src/components/Button.tsx", nodePlatform.path);
     expect(p.startsWith(path.resolve(tmp) + path.sep)).toBe(true);
   });
 
   it("allows the root itself", () => {
-    expect(safeJoin(tmp, ".")).toBe(path.resolve(tmp));
+    expect(safeJoin(tmp, ".", nodePlatform.path)).toBe(path.resolve(tmp));
   });
 });
 

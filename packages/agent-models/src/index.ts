@@ -25,6 +25,8 @@ export interface MockScriptEntry {
   /** Substring matched against the last user message to select this reply. */
   match: string;
   reply: string;
+  /** Optional scripted tool calls returned with this reply. */
+  toolCalls?: Array<{ id?: string; name: string; arguments: unknown }>;
 }
 
 export class MockProvider implements ModelProvider {
@@ -32,6 +34,7 @@ export class MockProvider implements ModelProvider {
   private callCount = 0;
   private replies: MockScriptEntry[];
   private fallback: string;
+  private seq = 0;
 
   constructor(options?: {
     replies?: MockScriptEntry[];
@@ -69,6 +72,17 @@ export class MockProvider implements ModelProvider {
     this.callCount++;
     const lastUser = [...req.messages].reverse().find((m) => m.role === "user");
     const entry = this.replies.find((r) => lastUser && lastUser.content.includes(r.match));
+    if (entry?.toolCalls?.length) {
+      return {
+        content: entry.reply,
+        finishReason: "stop",
+        toolCalls: entry.toolCalls.map((c, i) => ({
+          id: c.id ?? `mock_call_${++this.seq}_${i}`,
+          name: c.name,
+          argumentsJson: JSON.stringify(c.arguments),
+        })),
+      };
+    }
     // Deterministic output derived from input when no script matches.
     const content = entry
       ? entry.reply
@@ -111,6 +125,21 @@ export class OpenAICompatibleProvider implements ModelProvider {
   async chat(req: ChatRequest, signal?: AbortSignal): Promise<ChatResponse> {
     const key = this.config.secretRef ? await this.secrets.resolve(this.config.secretRef) : null;
 
+    const body: Record<string, unknown> = {
+      model: this.config.modelId,
+      messages: req.messages.map(toOpenAIMessage),
+      temperature: req.temperature,
+      max_tokens: req.maxTokens,
+      ...(req.tools?.length
+        ? {
+            tools: req.tools.map((t) => ({
+              type: "function",
+              function: { name: t.name, description: t.description, parameters: t.parameters },
+            })),
+          }
+        : {}),
+    };
+
     let res: Response;
     try {
       res = await fetch(new URL("chat/completions", this.config.baseUrl!), {
@@ -119,12 +148,7 @@ export class OpenAICompatibleProvider implements ModelProvider {
           "content-type": "application/json",
           ...(key ? { authorization: `Bearer ${key}` } : {}),
         },
-        body: JSON.stringify({
-          model: this.config.modelId,
-          messages: req.messages,
-          temperature: req.temperature,
-          max_tokens: req.maxTokens,
-        }),
+        body: JSON.stringify(body),
         signal,
       });
     } catch (e) {
@@ -158,16 +182,65 @@ export class OpenAICompatibleProvider implements ModelProvider {
       });
     }
 
-    const body = (await res.json()) as {
-      choices?: Array<{ message?: { content?: string }; finish_reason?: string }>;
+    const bodyJson = (await res.json()) as {
+      choices?: Array<{
+        message?: {
+          content?: string | null;
+          tool_calls?: Array<{
+            id?: string;
+            function?: { name?: string; arguments?: string };
+          }>;
+        };
+        finish_reason?: string;
+      }>;
     };
-    const choice = body.choices?.[0];
+    const choice = bodyJson.choices?.[0];
+    const message = choice?.message;
+    const rawCalls = message?.tool_calls ?? [];
+    const toolCalls = rawCalls
+      .filter((c) => c.function?.name)
+      .map((c, i) => ({
+        id: c.id ?? `call_${i}`,
+        name: c.function!.name!,
+        argumentsJson: c.function?.arguments ?? "{}",
+      }));
+
     return {
-      content: choice?.message?.content ?? "",
+      content: message?.content ?? "",
       finishReason:
-        choice?.finish_reason === "length" ? "length" : choice?.finish_reason === "stop" ? "stop" : "error",
+        toolCalls.length > 0
+          ? "stop"
+          : choice?.finish_reason === "length"
+            ? "length"
+            : choice?.finish_reason === "stop"
+              ? "stop"
+              : "error",
+      ...(toolCalls.length > 0 ? { toolCalls } : {}),
     };
   }
+}
+
+function toOpenAIMessage(message: ChatMessage): Record<string, unknown> {
+  if (message.role === "assistant" && message.toolCalls?.length) {
+    return {
+      role: "assistant",
+      content: message.content || null,
+      tool_calls: message.toolCalls.map((call) => ({
+        id: call.id,
+        type: "function",
+        function: { name: call.name, arguments: call.argumentsJson },
+      })),
+    };
+  }
+  if (message.role === "tool") {
+    return {
+      role: "tool",
+      content: message.content,
+      tool_call_id: message.toolCallId,
+      ...(message.name ? { name: message.name } : {}),
+    };
+  }
+  return { role: message.role, content: message.content, ...(message.name ? { name: message.name } : {}) };
 }
 
 /* ------------------------------------------------------------------ */

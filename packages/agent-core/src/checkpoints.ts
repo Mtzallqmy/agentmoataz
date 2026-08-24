@@ -1,104 +1,75 @@
-/**
- * CheckpointManager — snapshots workspace files (with SHA-256 manifest)
- * into <root>/.agent/checkpoints/<id>/ and can restore them.
- */
-import fsp from "node:fs/promises";
-import path from "node:path";
-import crypto from "node:crypto";
 import type { Checkpoint } from "@agentmoataz/agent-protocol";
+import type { PlatformAdapters } from "@agentmoataz/agent-platform";
 
 const SKIP_DIRS = new Set([".git", "node_modules"]);
 
+/** Platform-neutral workspace checkpoints with SHA-256 manifests. */
 export class CheckpointManager {
-  constructor(private workspaceRoot: string) {}
+  constructor(
+    private workspaceRoot: string,
+    private platform: Pick<PlatformAdapters, "fs" | "path" | "crypto">
+  ) {}
 
   private get baseDir(): string {
-    return path.join(this.workspaceRoot, ".agent", "checkpoints");
+    return this.platform.path.join(this.workspaceRoot, ".agent", "checkpoints");
   }
 
   async create(reason: string, runId?: string): Promise<Checkpoint> {
-    const id = `cp-${Date.now()}-${crypto.randomBytes(3).toString("hex")}`;
-    const dir = path.join(this.baseDir, id);
-    const filesRoot = path.join(dir, "files");
+    const id = this.platform.crypto.randomId("cp");
+    const dir = this.platform.path.join(this.baseDir, id);
+    const filesRoot = this.platform.path.join(dir, "files");
     const manifest: Checkpoint["manifest"] = [];
-
     await this.copyTree(this.workspaceRoot, filesRoot, filesRoot, manifest);
-    await fsp.mkdir(dir, { recursive: true });
+    await this.platform.fs.mkdir(dir);
     const checkpoint: Checkpoint = {
       id,
-      projectId: path.basename(this.workspaceRoot),
+      projectId: this.platform.path.basename(this.workspaceRoot),
       runId: runId ?? null,
       reason,
       manifest,
       createdAt: new Date().toISOString(),
     };
-    await fsp.writeFile(path.join(dir, "checkpoint.json"), JSON.stringify(checkpoint, null, 2), "utf8");
+    await this.platform.fs.writeText(this.platform.path.join(dir, "checkpoint.json"), JSON.stringify(checkpoint, null, 2));
     return checkpoint;
   }
 
   async list(): Promise<Checkpoint[]> {
-    try {
-      const entries = await fsp.readdir(this.baseDir);
-      const out: Checkpoint[] = [];
-      for (const e of entries) {
-        const raw = await fsp
-          .readFile(path.join(this.baseDir, e, "checkpoint.json"), "utf8")
-          .catch(() => null);
-        if (raw) out.push(JSON.parse(raw) as Checkpoint);
-      }
-      return out.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
-    } catch {
-      return [];
+    if (!(await this.platform.fs.exists(this.baseDir))) return [];
+    const out: Checkpoint[] = [];
+    for (const entry of await this.platform.fs.list(this.baseDir)) {
+      if (!entry.isDirectory) continue;
+      const metadata = this.platform.path.join(entry.path, "checkpoint.json");
+      if (await this.platform.fs.exists(metadata)) out.push(JSON.parse(await this.platform.fs.readText(metadata)) as Checkpoint);
     }
+    return out.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
   }
 
   async restore(id: string): Promise<number> {
-    const dir = path.join(this.baseDir, id, "files");
-    await fsp.access(dir); // throws if unknown checkpoint
-    let restored = 0;
-    // Remove current tracked files then copy snapshot back.
-    for (const entry of await this.currentFiles()) {
-      await fsp.rm(path.join(this.workspaceRoot, entry), { force: true }).catch(() => undefined);
-    }
-    restored += await this.copyBack(dir, this.workspaceRoot);
-    return restored;
+    const source = this.platform.path.join(this.baseDir, id, "files");
+    if (!(await this.platform.fs.exists(source))) throw new Error(`unknown checkpoint ${id}`);
+    for (const file of await this.currentFiles()) await this.platform.fs.remove(this.platform.path.join(this.workspaceRoot, file));
+    return this.copyBack(source, this.workspaceRoot);
   }
 
   async delete(id: string): Promise<void> {
-    await fsp.rm(path.join(this.baseDir, id), { recursive: true, force: true });
+    await this.platform.fs.remove(this.platform.path.join(this.baseDir, id), true);
   }
 
-  /* ---------------- internals ---------------- */
-
-  private async copyTree(
-    src: string,
-    dest: string,
-    filesRoot: string,
-    manifest: Checkpoint["manifest"]
-  ): Promise<void> {
-    await fsp.mkdir(dest, { recursive: true });
+  private async copyTree(src: string, dest: string, filesRoot: string, manifest: Checkpoint["manifest"]): Promise<void> {
+    await this.platform.fs.mkdir(dest);
     let entries;
-    try {
-      entries = await fsp.readdir(src, { withFileTypes: true });
-    } catch {
-      return;
-    }
+    try { entries = await this.platform.fs.list(src); } catch { return; }
     for (const entry of entries) {
-      if (SKIP_DIRS.has(entry.name)) continue;
-      if (entry.name === ".agent" && src === this.workspaceRoot) continue; // don't recurse into checkpoints
-      const s = path.join(src, entry.name);
-      const d = path.join(dest, entry.name);
-      if (entry.isDirectory()) {
-        await this.copyTree(s, d, filesRoot, manifest);
-      } else {
-        await fsp.mkdir(path.dirname(d), { recursive: true });
-        await fsp.copyFile(s, d);
-        const buf = await fsp.readFile(s);
-        const rel = path.relative(filesRoot, d).split(path.sep).join("/");
+      if (SKIP_DIRS.has(entry.name) || (entry.name === ".agent" && src === this.workspaceRoot)) continue;
+      const target = this.platform.path.join(dest, entry.name);
+      if (entry.isDirectory) await this.copyTree(entry.path, target, filesRoot, manifest);
+      else {
+        await this.platform.fs.copy(entry.path, target);
+        const bytes = await this.platform.fs.readBytes(entry.path);
         manifest.push({
-          relativePath: rel,
-          sha256: crypto.createHash("sha256").update(buf).digest("hex"),
-          sizeBytes: buf.length,
+          relativePath: this.platform.path.relative(filesRoot, target).replace(/\\/g, "/"),
+          sha256: await this.platform.crypto.sha256Bytes(bytes),
+          sizeBytes: bytes.byteLength,
         });
       }
     }
@@ -106,17 +77,10 @@ export class CheckpointManager {
 
   private async copyBack(src: string, dest: string): Promise<number> {
     let count = 0;
-    const entries = await fsp.readdir(src, { withFileTypes: true });
-    for (const entry of entries) {
-      const s = path.join(src, entry.name);
-      const d = path.join(dest, entry.name);
-      if (entry.isDirectory()) {
-        count += await this.copyBack(s, d);
-      } else {
-        await fsp.mkdir(path.dirname(d), { recursive: true });
-        await fsp.copyFile(s, d);
-        count++;
-      }
+    for (const entry of await this.platform.fs.list(src)) {
+      const target = this.platform.path.join(dest, entry.name);
+      if (entry.isDirectory) count += await this.copyBack(entry.path, target);
+      else { await this.platform.fs.copy(entry.path, target); count++; }
     }
     return count;
   }
@@ -125,19 +89,12 @@ export class CheckpointManager {
     const out: string[] = [];
     const walk = async (dir: string, rel: string): Promise<void> => {
       let entries;
-      try {
-        entries = await fsp.readdir(dir, { withFileTypes: true });
-      } catch {
-        return;
-      }
-      for (const e of entries) {
-        if (e.isDirectory()) {
-          if (SKIP_DIRS.has(e.name)) continue;
-          if (e.name === ".agent" && dir === this.workspaceRoot) continue;
-          await walk(path.join(dir, e.name), rel ? `${rel}/${e.name}` : e.name);
-        } else {
-          out.push(rel ? `${rel}/${e.name}` : e.name);
-        }
+      try { entries = await this.platform.fs.list(dir); } catch { return; }
+      for (const entry of entries) {
+        if (entry.isDirectory) {
+          if (SKIP_DIRS.has(entry.name) || (entry.name === ".agent" && dir === this.workspaceRoot)) continue;
+          await walk(entry.path, rel ? `${rel}/${entry.name}` : entry.name);
+        } else out.push(rel ? `${rel}/${entry.name}` : entry.name);
       }
     };
     await walk(this.workspaceRoot, "");

@@ -1,17 +1,7 @@
-﻿import React from "react";
-import { View, Text, StyleSheet } from "react-native";
+import React, { useState } from "react";
+import { Text } from "react-native";
+import { Button, Card, Field, Screen, Title, ui } from "../components/AppUI";
+import { useAgentRuntime } from "../services/AppAgentContext";
 
-export default function Screen() {
-  return (
-    <View style={styles.wrap}>
-      <Text style={styles.title}>tools</Text>
-      <Text style={styles.hint}>Screen scaffolded in Phase 3; wired to agent runtime events as phases land.</Text>
-    </View>
-  );
-}
-
-const styles = StyleSheet.create({
-  wrap: { flex: 1, backgroundColor: "#0f1115", padding: 20 },
-  title: { color: "#fff", fontSize: 24, fontWeight: "700" },
-  hint: { color: "#9aa3b2", marginTop: 8 },
-});
+const builtins = ["read_file", "write_file", "delete_file", "list_tree", "search_text", "http_get", "http_request", "download_file"];
+export default function Tools() { const { runtime } = useAgentRuntime(); const [url, setUrl] = useState(""); const [status, setStatus] = useState(""); return <Screen><Title hint="Every built-in and MCP tool passes PermissionEngine">Tools</Title>{builtins.map((name) => <Card key={name}><Text style={ui.body}>{name}</Text></Card>)}<Text style={ui.heading}>Remote MCP server</Text><Field value={url} onChangeText={setUrl} autoCapitalize="none" placeholder="https://server.example/mcp" /><Button title="Connect and discover" onPress={() => void runtime.addMcpServer(url).then((count) => setStatus(`${count} MCP tools registered`)).catch((error) => setStatus(error.message))} />{status ? <Text style={ui.body}>{status}</Text> : null}</Screen>; }

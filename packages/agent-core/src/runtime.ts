@@ -13,7 +13,6 @@
  *   successfully — including calls implied by the step's declared
  *   expectedTools. Missing calls fail the step.
  */
-import crypto from "node:crypto";
 import type {
   AgentRun,
   ChatMessage,
@@ -28,6 +27,8 @@ import { ToolRegistry } from "./tools.js";
 import { TaskGraph, defaultPlan, type PlanInput, type PlannedStep } from "./planner.js";
 import { CheckpointManager } from "./checkpoints.js";
 import { ArtifactManager } from "./artifacts.js";
+import type { RuntimeStore } from "./store.js";
+import { portableCrypto, type CryptoAdapter } from "@agentmoataz/agent-platform";
 
 export interface ApprovalRequest {
   toolName: string;
@@ -49,6 +50,9 @@ export interface RuntimeOptions {
   maxSteps?: number;
   perToolTimeoutMs?: number;
   workspaceRoot?: string;
+  /** Durable store: when present, every run transition is persisted. */
+  store?: RuntimeStore;
+  crypto?: CryptoAdapter;
 }
 
 export interface RunResult {
@@ -89,6 +93,8 @@ export class AgentRuntime {
   private maxSteps: number;
   private perToolTimeoutMs: number;
   private workspaceRoot?: string;
+  private store?: RuntimeStore;
+  private crypto: CryptoAdapter;
 
   private runs = new Map<string, AgentRun>();
   private controllers = new Map<string, AbortController>();
@@ -108,6 +114,8 @@ export class AgentRuntime {
     this.maxSteps = opts.maxSteps ?? 100;
     this.perToolTimeoutMs = opts.perToolTimeoutMs ?? DEFAULT_TOOL_TIMEOUT_MS;
     this.workspaceRoot = opts.workspaceRoot;
+    this.store = opts.store;
+    this.crypto = opts.crypto ?? portableCrypto;
   }
 
   getRun(id: string): AgentRun | undefined {
@@ -137,6 +145,7 @@ export class AgentRuntime {
     run.state = "paused";
     run.updatedAt = new Date().toISOString();
     this.events.emit({ type: "run_paused", runId });
+    void this.persistRun(runId);
   }
 
   resume(runId: string): void {
@@ -145,6 +154,7 @@ export class AgentRuntime {
     run.state = "running";
     run.updatedAt = new Date().toISOString();
     this.events.emit({ type: "run_resumed", runId });
+    void this.persistRun(runId);
     this.paused.get(runId)?.();
     this.paused.delete(runId);
   }
@@ -156,9 +166,41 @@ export class AgentRuntime {
     run.state = "cancelled";
     run.updatedAt = new Date().toISOString();
     this.controllers.get(runId)?.abort(new Error("run cancelled"));
+    void this.persistRun(runId);
     this.events.emit({ type: "run_cancelled", runId });
     this.paused.get(runId)?.();
     this.paused.delete(runId);
+  }
+
+  private async persistRun(runId: string): Promise<void> {
+    const run = this.runs.get(runId);
+    if (!run || !this.store) return;
+    try {
+      await this.store.saveRun({ ...run });
+    } catch {
+      // persistence failure must never crash the run; surfaced via events in future
+    }
+  }
+
+  /** Hydrate runs from the durable store at startup and mark mid-flight runs interrupted. */
+  async hydrate(): Promise<string[]> {
+    if (!this.store) return [];
+    const persisted = await this.store.listRuns();
+    const recovered: string[] = [];
+    for (const run of persisted) {
+      this.runs.set(run.id, { ...run });
+      if (
+        run.state === "running" ||
+        run.state === "planning" ||
+        run.state === "waiting_approval"
+      ) {
+        run.state = "interrupted";
+        run.updatedAt = new Date().toISOString();
+        await this.store.saveRun(run);
+        recovered.push(run.id);
+      }
+    }
+    return recovered;
   }
 
   /* ------------------------------------------------------------------ */
@@ -178,7 +220,7 @@ export class AgentRuntime {
 
   async run(goal: string): Promise<RunResult> {
     const nowIso = () => new Date().toISOString();
-    const runId = `run-${Date.now()}-${crypto.randomBytes(3).toString("hex")}`;
+    const runId = this.crypto.randomId("run");
     const controller = new AbortController();
     this.controllers.set(runId, controller);
 
@@ -197,6 +239,7 @@ export class AgentRuntime {
     };
     this.runs.set(runId, run);
     this.events.emit({ type: "run_started", runId, payload: { goal } });
+    await this.persistRun(runId);
 
     let completedSteps = 0;
 
@@ -280,6 +323,7 @@ export class AgentRuntime {
       run.state = "completed";
       run.finishedAt = nowIso();
       this.events.emit({ type: "run_completed", runId, payload: { stepsCompleted: completedSteps } });
+      await this.persistRun(runId);
       return { runId, state: "completed", stepsCompleted: completedSteps, error: null };
     } catch (e) {
       const structured = toStructured(e);
@@ -287,6 +331,7 @@ export class AgentRuntime {
       run.error = structured;
       run.finishedAt = nowIso();
       this.events.emit({ type: "run_failed", runId, payload: { ...structured } });
+      await this.persistRun(runId);
       return { runId, state: "failed", stepsCompleted: completedSteps, error: structured };
     } finally {
       this.controllers.delete(runId);
@@ -338,7 +383,7 @@ export class AgentRuntime {
     if ((plannedCalls === undefined || plannedCalls.length === 0) && declared.length > 0) {
       return [
         {
-          toolCallId: `tc-${runId}-missing-${crypto.randomBytes(3).toString("hex")}`,
+          toolCallId: this.crypto.randomId(`tc-${runId}-missing`),
           toolName: declared[0]!,
           ok: false,
           executed: false,
@@ -357,7 +402,7 @@ export class AgentRuntime {
 
     const records: ToolExecutionRecord[] = [];
     let seq = 0;
-    const nextCallId = () => `tc-${runId}-${stepId}-${++seq}-${crypto.randomBytes(2).toString("hex")}`;
+    const nextCallId = () => this.crypto.randomId(`tc-${runId}-${stepId}-${++seq}`);
 
     for (const call of plannedCalls ?? []) {
       // Cancellation before starting a call: record as executed=false, never retried.
@@ -555,7 +600,7 @@ export class AgentRuntime {
   private actionCounts = new Map<string, number>();
 
   private noteAction(runId: string, toolName: string, input: unknown): void {
-    const key = `${runId}:${toolName}:${crypto.createHash("sha256").update(JSON.stringify(input)).digest("hex").slice(0, 16)}`;
+    const key = `${runId}:${toolName}:${JSON.stringify(input)}`;
     const n = (this.actionCounts.get(key) ?? 0) + 1;
     this.actionCounts.set(key, n);
     if (n > 2) {

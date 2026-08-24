@@ -3,10 +3,10 @@ import os from "node:os";
 import path from "node:path";
 import fsp from "node:fs/promises";
 import {
-  JsonFileStore,
   Collection,
   PersistentMemoryStore,
 } from "../src/index.js";
+import { JsonFileStore } from "../src/node.js";
 import { MemoryManager } from "@agentmoataz/agent-memory";
 
 let dir: string;

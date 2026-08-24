@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "@agentmoataz/agent-core": "workspace:*",
+    "@agentmoataz/agent-platform": "workspace:*",
     "@agentmoataz/agent-protocol": "workspace:*",
     "zod": "^3.25.76"
   }

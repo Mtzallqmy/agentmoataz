@@ -2,10 +2,11 @@ import { describe, it, expect } from "vitest";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { SkillManager } from "../src/index.js";
+import { nodePlatform } from "@agentmoataz/agent-platform/node";
 
 describe("SkillManager", () => {
   it("loads valid skills from a directory tree", async () => {
-    const mgr = new SkillManager();
+    const mgr = new SkillManager(nodePlatform);
     const n = await mgr.loadFrom(path.join(fileURLToPath(new URL("../", import.meta.url)), "testdata", "skills"));
     expect(n).toBe(1);
     const skill = mgr.get("create-expo-project")!;
@@ -15,7 +16,7 @@ describe("SkillManager", () => {
   });
 
   it("rejects invalid metadata (missing steps)", async () => {
-    const mgr = new SkillManager();
+    const mgr = new SkillManager(nodePlatform);
     await expect(
       mgr.loadSkill(path.join(fileURLToPath(new URL("../", import.meta.url)), "testdata", "skills", "coding", "nonexistent"))
     ).rejects.toThrow();
@@ -23,7 +24,7 @@ describe("SkillManager", () => {
   });
 
   it("enable/disable and trigger matching", async () => {
-    const mgr = new SkillManager();
+    const mgr = new SkillManager(nodePlatform);
     await mgr.loadFrom(path.join(fileURLToPath(new URL("../", import.meta.url)), "testdata", "skills"));
 
     expect(mgr.match("please create expo project for me")).toHaveLength(1);

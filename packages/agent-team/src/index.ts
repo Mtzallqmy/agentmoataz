@@ -8,8 +8,8 @@
  * Delegations and sub-agent results are persisted as structured records.
  * Concurrency and depth are bounded; no uncontrolled self-spawn.
  */
-import crypto from "node:crypto";
 import type { StructuredError } from "@agentmoataz/agent-protocol";
+import { portableCrypto, type CryptoAdapter } from "@agentmoataz/agent-platform";
 
 export type AgentRole = "MANAGER" | "PLANNER" | "CODER" | "RESEARCHER" | "REVIEWER" | "MEDIA";
 
@@ -50,8 +50,9 @@ export class AgentTeam {
   private seq = 0;
   private limits: TeamLimits;
   private reviewer: ReviewerFn;
+  private crypto: CryptoAdapter;
 
-  constructor(options?: { limits?: Partial<TeamLimits>; reviewer?: ReviewerFn }) {
+  constructor(options?: { limits?: Partial<TeamLimits>; reviewer?: ReviewerFn; crypto?: CryptoAdapter }) {
     this.limits = { ...DEFAULT_LIMITS, ...(options?.limits ?? {}) };
     this.reviewer =
       options?.reviewer ??
@@ -61,6 +62,7 @@ export class AgentTeam {
           input.changes.trim().length > 0,
         issues: [],
       }));
+    this.crypto = options?.crypto ?? portableCrypto;
   }
 
   get auditTrail(): readonly Delegation[] {
@@ -107,7 +109,7 @@ export class AgentTeam {
       return d;
     }
     const d: Delegation = {
-      id: `del-${crypto.randomBytes(3).toString("hex")}`,
+      id: this.crypto.randomId("del"),
       fromRole,
       toRole,
       instruction,

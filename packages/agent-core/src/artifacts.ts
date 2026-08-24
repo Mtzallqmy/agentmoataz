@@ -1,13 +1,10 @@
-/**
- * ArtifactManager — indexes produced artifacts with checksums and metadata.
- */
-import fsp from "node:fs/promises";
-import crypto from "node:crypto";
 import type { Artifact, ArtifactType } from "@agentmoataz/agent-protocol";
+import type { PlatformAdapters } from "@agentmoataz/agent-platform";
 
 export class ArtifactManager {
   private artifacts: Artifact[] = [];
-  private seq = 0;
+
+  constructor(private platform: Pick<PlatformAdapters, "fs" | "crypto">) {}
 
   async register(init: {
     projectId: string;
@@ -17,17 +14,17 @@ export class ArtifactManager {
     mime?: string;
     provider?: string;
   }): Promise<Artifact> {
-    const buf = await fsp.readFile(init.absolutePath);
+    const bytes = await this.platform.fs.readBytes(init.absolutePath);
     const artifact: Artifact = {
-      id: `art-${Date.now()}-${++this.seq}`,
+      id: this.platform.crypto.randomId("art"),
       projectId: init.projectId,
       taskId: init.taskId ?? null,
       type: init.type,
       path: init.absolutePath,
       mime: init.mime ?? guessMime(init.absolutePath),
       provider: init.provider ?? "local",
-      checksumSha256: crypto.createHash("sha256").update(buf).digest("hex"),
-      sizeBytes: buf.length,
+      checksumSha256: await this.platform.crypto.sha256Bytes(bytes),
+      sizeBytes: bytes.byteLength,
       createdAt: new Date().toISOString(),
     };
     this.artifacts.push(artifact);
@@ -35,29 +32,27 @@ export class ArtifactManager {
   }
 
   list(projectId?: string): readonly Artifact[] {
-    return projectId ? this.artifacts.filter((a) => a.projectId === projectId) : this.artifacts;
+    return projectId ? this.artifacts.filter((artifact) => artifact.projectId === projectId) : this.artifacts;
   }
 
   get(id: string): Artifact | undefined {
-    return this.artifacts.find((a) => a.id === id);
+    return this.artifacts.find((artifact) => artifact.id === id);
   }
 
-  /** Verify stored checksum still matches the file on disk. */
   async verify(id: string): Promise<boolean> {
-    const a = this.get(id);
-    if (!a || !a.checksumSha256) return false;
+    const artifact = this.get(id);
+    if (!artifact?.checksumSha256) return false;
     try {
-      const buf = await fsp.readFile(a.path);
-      return crypto.createHash("sha256").update(buf).digest("hex") === a.checksumSha256;
+      const checksum = await this.platform.crypto.sha256Bytes(await this.platform.fs.readBytes(artifact.path));
+      return checksum === artifact.checksumSha256;
     } catch {
       return false;
     }
   }
 }
 
-function guessMime(p: string): string {
-  const ext = p.split(".").pop()?.toLowerCase() ?? "";
-  switch (ext) {
+function guessMime(path: string): string {
+  switch (path.split(".").pop()?.toLowerCase() ?? "") {
     case "zip": return "application/zip";
     case "png": return "image/png";
     case "jpg":

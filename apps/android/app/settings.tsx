@@ -1,17 +1,8 @@
-﻿import React from "react";
-import { View, Text, StyleSheet } from "react-native";
+import React, { useState } from "react";
+import { Text, View } from "react-native";
+import { Button, Card, Screen, Title, ui } from "../components/AppUI";
+import { useAgentRuntime } from "../services/AppAgentContext";
+import type { ProfileName } from "@agentmoataz/agent-core";
 
-export default function Screen() {
-  return (
-    <View style={styles.wrap}>
-      <Text style={styles.title}>settings</Text>
-      <Text style={styles.hint}>Screen scaffolded in Phase 3; wired to agent runtime events as phases land.</Text>
-    </View>
-  );
-}
-
-const styles = StyleSheet.create({
-  wrap: { flex: 1, backgroundColor: "#0f1115", padding: 20 },
-  title: { color: "#fff", fontSize: 24, fontWeight: "700" },
-  hint: { color: "#9aa3b2", marginTop: 8 },
-});
+const profiles: ProfileName[] = ["SAFE", "BALANCED", "AUTONOMOUS", "CUSTOM"];
+export default function Settings() { const { runtime, snapshot } = useAgentRuntime(); const [profile, setProfile] = useState<ProfileName>("BALANCED"); return <Screen><Title hint="Dangerous actions remain approval-gated">Settings</Title><Card><Text style={ui.heading}>Permission profile</Text><View style={ui.row}>{profiles.map((item) => <Button key={item} tone={profile === item ? "primary" : "muted"} title={item} onPress={() => { setProfile(item); runtime.setPermissionProfile(item); }} />)}</View></Card><Card><Text style={ui.heading}>Local state</Text><Text style={ui.body}>SQLite: {snapshot.initialized ? "open" : "initializing"}</Text><Text style={ui.body}>Provider: {snapshot.providerConfigured ? "configured" : "missing"}</Text><Text style={ui.muted}>Heavy local runtimes and cloud sync remain disabled.</Text></Card></Screen>; }

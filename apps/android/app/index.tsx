@@ -1,52 +1,26 @@
 import React from "react";
-import { View, Text, StyleSheet, ScrollView, Pressable } from "react-native";
+import { Pressable, StyleSheet, Text, View } from "react-native";
 import { useRouter } from "expo-router";
+import { Card, Screen, Title, ui } from "../components/AppUI";
+import { useAgentRuntime, useProjects } from "../services/AppAgentContext";
 
-const SECTIONS: Array<{ title: string; route: string; hint: string }> = [
-  { title: "New Task", route: "/chat", hint: "Start an agent run" },
-  { title: "Projects", route: "/projects", hint: "Workspaces & history" },
-  { title: "Tasks", route: "/tasks", hint: "Live run timeline" },
-  { title: "Files", route: "/files", hint: "Browse project files" },
-  { title: "Artifacts", route: "/artifacts", hint: "ZIPs, reports, exports" },
-  { title: "Models", route: "/models", hint: "Providers & routing" },
-  { title: "Tools", route: "/tools", hint: "Built-ins & MCP" },
-  { title: "Memory", route: "/memory", hint: "Inspect stored memory" },
-  { title: "Skills", route: "/skills", hint: "Enable/disable skills" },
-  { title: "Settings", route: "/settings", hint: "Permissions & cloud" },
-];
+const links = [
+  ["New task", "/chat", "Start a model-driven run"], ["Projects", "/projects", "Workspaces and history"],
+  ["Tasks", "/tasks", "Live and interrupted runs"], ["Files", "/files", "Browse and edit files"],
+  ["Artifacts", "/artifacts", "ZIP exports and reports"], ["Models", "/models", "Configure a real provider"],
+  ["Tools", "/tools", "Built-ins and MCP"], ["Memory", "/memory", "Inspect persisted memory"],
+  ["Skills", "/skills", "Reusable workflows"], ["Settings", "/settings", "Permissions and runtime"],
+] as const;
 
 export default function Home() {
   const router = useRouter();
-  return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-      <Text style={styles.title}>AgentMoataz</Text>
-      <Text style={styles.subtitle}>Local-first autonomous AI agent</Text>
-      <View style={styles.grid}>
-        {SECTIONS.map((s) => (
-          <Pressable key={s.route} style={styles.card} onPress={() => router.push(s.route as never)}>
-            <Text style={styles.cardTitle}>{s.title}</Text>
-            <Text style={styles.cardHint}>{s.hint}</Text>
-          </Pressable>
-        ))}
-      </View>
-    </ScrollView>
-  );
+  const { snapshot } = useAgentRuntime();
+  const { projects } = useProjects();
+  return <Screen>
+    <Title hint="Local-first autonomous coding agent">AgentMoataz</Title>
+    <Card><Text style={ui.heading}>Runtime status</Text><Text style={snapshot.providerConfigured ? ui.good : ui.bad}>{snapshot.providerConfigured ? "Real provider configured" : "Provider required before running tasks"}</Text><Text style={ui.muted}>{projects.length} local project(s) · {snapshot.activeRunId ? "run active" : "idle"}</Text></Card>
+    <View style={styles.grid}>{links.map(([title, route, hint]) => <Pressable key={route} style={styles.link} onPress={() => router.push(route as never)}><Text style={styles.linkTitle}>{title}</Text><Text style={styles.linkHint}>{hint}</Text></Pressable>)}</View>
+  </Screen>;
 }
 
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: "#0f1115" },
-  content: { padding: 16, paddingBottom: 40 },
-  title: { color: "#fff", fontSize: 28, fontWeight: "700", marginTop: 12 },
-  subtitle: { color: "#9aa3b2", fontSize: 14, marginBottom: 20 },
-  grid: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
-  card: {
-    width: "47%",
-    backgroundColor: "#1a1e27",
-    borderRadius: 12,
-    padding: 14,
-    minHeight: 84,
-    justifyContent: "center",
-  },
-  cardTitle: { color: "#fff", fontSize: 16, fontWeight: "600" },
-  cardHint: { color: "#8b93a3", fontSize: 12, marginTop: 4 },
-});
+const styles = StyleSheet.create({ grid: { flexDirection: "row", flexWrap: "wrap", gap: 10 }, link: { width: "48%", minHeight: 92, backgroundColor: "#171c26", borderRadius: 12, padding: 13, borderWidth: 1, borderColor: "#283142", justifyContent: "center" }, linkTitle: { color: "#fff", fontWeight: "700", fontSize: 16 }, linkHint: { color: "#7f899b", fontSize: 11, marginTop: 4 } });

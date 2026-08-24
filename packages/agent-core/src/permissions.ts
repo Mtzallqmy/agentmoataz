@@ -13,8 +13,6 @@ import { AgentError } from "@agentmoataz/agent-protocol";
 export type ProfileName = "SAFE" | "BALANCED" | "AUTONOMOUS" | "CUSTOM";
 export type Decision = "allow" | "ask" | "deny";
 
-const READ_ONLY: PermissionCategory[] = ["read_project_file"];
-
 const BASE: Record<ProfileName, Partial<Record<PermissionCategory, Decision>>> = {
   SAFE: {
     read_project_file: "allow",

@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import http from "node:http";
 import { buildHttpTools } from "../src/index.js";
+import { nodePlatform } from "@agentmoataz/agent-platform/node";
 
 let server: http.Server;
 let baseUrl: string;
@@ -37,7 +38,7 @@ afterAll(async () => {
 const ctx = { runId: "t", workspaceRoot: "" };
 
 describe("http tools", () => {
-  const tools = buildHttpTools();
+  const tools = buildHttpTools(nodePlatform);
   const get = tools.find((t) => t.name === "http_get")!;
   const request = tools.find((t) => t.name === "http_request")!;
   const exec = (t: (typeof tools)[number], input: unknown, c?: Partial<typeof ctx>) =>

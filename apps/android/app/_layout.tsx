@@ -1,10 +1,12 @@
 import { Stack } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { ErrorBoundary } from "../components/ErrorBoundary";
+import { AppAgentProvider } from "../services/AppAgentContext";
 
 export default function RootLayout() {
   return (
     <ErrorBoundary>
+      <AppAgentProvider>
       <StatusBar style="auto" />
       <Stack screenOptions={{ headerTitleStyle: { fontWeight: "600" } }}>
         <Stack.Screen name="index" options={{ title: "AgentMoataz" }} />
@@ -19,6 +21,7 @@ export default function RootLayout() {
         <Stack.Screen name="skills" options={{ title: "Skills" }} />
         <Stack.Screen name="settings" options={{ title: "Settings" }} />
       </Stack>
+      </AppAgentProvider>
     </ErrorBoundary>
   );
 }

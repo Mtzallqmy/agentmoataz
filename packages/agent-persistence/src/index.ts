@@ -5,8 +5,6 @@
  * provides the storage contracts plus a JSON-file adapter used by Node tooling
  * and tests. Restart persistence must be lossless.
  */
-import fsp from "node:fs/promises";
-import path from "node:path";
 import type { MemoryRecord, MemoryScope } from "@agentmoataz/agent-protocol";
 import type { MemoryStore } from "@agentmoataz/agent-memory";
 
@@ -17,55 +15,12 @@ export interface KeyValueStore {
   keys(prefix?: string): Promise<string[]>;
 }
 
-/** Atomic JSON-file store: writes go to temp file then rename. */
-export class JsonFileStore implements KeyValueStore {
-  private cache = new Map<string, unknown>();
-  private loaded = false;
-
-  constructor(private filePath: string) {}
-
-  private async load(): Promise<void> {
-    if (this.loaded) return;
-    try {
-      const raw = await fsp.readFile(this.filePath, "utf8");
-      const obj = JSON.parse(raw) as Record<string, unknown>;
-      for (const [k, v] of Object.entries(obj)) this.cache.set(k, v);
-    } catch {
-      // first run / missing file
-    }
-    this.loaded = true;
-  }
-
-  private async flush(): Promise<void> {
-    await fsp.mkdir(path.dirname(this.filePath), { recursive: true });
-    const obj: Record<string, unknown> = {};
-    for (const [k, v] of this.cache) obj[k] = v;
-    const tmp = `${this.filePath}.tmp`;
-    await fsp.writeFile(tmp, JSON.stringify(obj), "utf8");
-    await fsp.rename(tmp, this.filePath);
-  }
-
-  async get<T>(key: string): Promise<T | null> {
-    await this.load();
-    return (this.cache.get(key) as T) ?? null;
-  }
-
-  async set<T>(key: string, value: T): Promise<void> {
-    await this.load();
-    this.cache.set(key, value);
-    await this.flush();
-  }
-
-  async delete(key: string): Promise<void> {
-    await this.load();
-    this.cache.delete(key);
-    await this.flush();
-  }
-
-  async keys(prefix = ""): Promise<string[]> {
-    await this.load();
-    return [...this.cache.keys()].filter((k) => k.startsWith(prefix)).sort();
-  }
+export class InMemoryKeyValueStore implements KeyValueStore {
+  private values = new Map<string, unknown>();
+  async get<T>(key: string): Promise<T | null> { return (this.values.get(key) as T) ?? null; }
+  async set<T>(key: string, value: T): Promise<void> { this.values.set(key, value); }
+  async delete(key: string): Promise<void> { this.values.delete(key); }
+  async keys(prefix = ""): Promise<string[]> { return [...this.values.keys()].filter((key) => key.startsWith(prefix)).sort(); }
 }
 
 /** Typed collection over a KeyValueStore with auto ids. */
@@ -123,3 +78,52 @@ export class PersistentMemoryStore implements MemoryStore {
 export function scopeMatches(record: MemoryRecord, scopes?: MemoryScope[]): boolean {
   return !scopes || scopes.includes(record.scope);
 }
+
+/* ------------------------------------------------------------------ */
+/* RuntimeStore adapter — durable agent runs + events over KeyValue    */
+/* ------------------------------------------------------------------ */
+
+import type { AgentEvent, AgentRun } from "@agentmoataz/agent-protocol";
+
+export class JsonRuntimeStore {
+  private runs: Collection<AgentRun>;
+  private events: Collection<AgentEvent & { k: string }>;
+
+  constructor(store: KeyValueStore) {
+    this.runs = new Collection<AgentRun>(store, "runs");
+    this.events = new Collection<AgentEvent & { k: string }>(store, "events");
+  }
+
+  async saveRun(run: AgentRun): Promise<void> {
+    await this.runs.put(run);
+  }
+
+  async getRun(id: string): Promise<AgentRun | null> {
+    return this.runs.get(id);
+  }
+
+  async listRuns(): Promise<AgentRun[]> {
+    const all = await this.runs.all();
+    return all.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  }
+
+  async appendEvent(event: AgentEvent): Promise<void> {
+    await this.events.put({ ...event, k: `${event.runId}:${event.id}` });
+  }
+
+  async listEvents(runId: string): Promise<AgentEvent[]> {
+    const all = await this.events.all();
+    return all
+      .filter((e) => e.runId === runId)
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+      .map(({ k: _k, ...rest }) => rest as AgentEvent);
+  }
+}
+
+export {
+  SQLITE_SCHEMA_VERSION,
+  SqliteKeyValueStore,
+  SqliteRuntimeStore,
+  migrateRuntimeDatabase,
+  type ExpoSqliteDatabase,
+} from "./expo-sqlite.js";

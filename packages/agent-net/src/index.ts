@@ -8,8 +8,7 @@
 import { z } from "zod";
 import { AgentError } from "@agentmoataz/agent-protocol";
 import type { Tool } from "@agentmoataz/agent-core";
-import fsp from "node:fs/promises";
-import path from "node:path";
+import type { PlatformAdapters } from "@agentmoataz/agent-platform";
 
 const MAX_RESPONSE_BYTES = 5 * 1024 * 1024;
 const MAX_REDIRECTS = 5;
@@ -81,7 +80,7 @@ async function readBounded(res: Response): Promise<{ text: string; truncated: bo
   return { text: text + decoder.decode(), truncated: false };
 }
 
-export function buildHttpTools(): Tool[] {
+export function buildHttpTools(platform?: Pick<PlatformAdapters, "fs" | "path">): Tool[] {
   const httpGet: Tool<{ url: string }, HttpResult> = {
     name: "http_get",
     description: "GET a URL as untrusted text data (size/redirect/timeout capped).",
@@ -137,29 +136,36 @@ export function buildHttpTools(): Tool[] {
     inputSchema: z.object({ url: z.string().url(), fileName: z.string().min(1).max(120) }),
     async execute(input, ctx) {
       // safe filename: strip any path components / traversal
-      const safeName = path.basename(input.fileName).replace(/[^\w.\-]+/g, "_");
+      if (!platform) {
+        throw new AgentError({ code: "CAPABILITY_UNAVAILABLE", category: "capability", message: "download filesystem adapter unavailable", recoverable: false, retryable: false });
+      }
+      const safeName = platform.path.basename(input.fileName).replace(/[^\w.\-]+/g, "_");
       if (!safeName || safeName === "." || safeName === "..") {
         throw new AgentError({
           code: "INVALID_TOOL_ARGUMENT", category: "argument",
           message: "invalid file name", recoverable: false, retryable: false,
         });
       }
-      const destDir = path.join(ctx.workspaceRoot || process.cwd(), "exports");
-      await fsp.mkdir(destDir, { recursive: true });
-      const dest = path.join(destDir, safeName);
+      const workspaceRoot = ctx.workspaceRoot;
+      if (!workspaceRoot) {
+        throw new AgentError({ code: "CAPABILITY_UNAVAILABLE", category: "capability", message: "workspace root unavailable", recoverable: false, retryable: false });
+      }
+      const destDir = platform.path.join(workspaceRoot, "exports");
+      await platform.fs.mkdir(destDir);
+      const dest = platform.path.join(destDir, safeName);
 
       const res = await fetchWithLimits(input.url, "GET", {}, undefined, ctx.signal);
-      const buf = await res.arrayBuffer();
-      if (buf.byteLength > MAX_RESPONSE_BYTES) {
+      const bytes = new Uint8Array(await res.arrayBuffer());
+      if (bytes.byteLength > MAX_RESPONSE_BYTES) {
         throw new AgentError({
           code: "INVALID_TOOL_ARGUMENT", category: "network",
           message: `download exceeds ${MAX_RESPONSE_BYTES} byte limit`, recoverable: false, retryable: false,
         });
       }
-      await fsp.writeFile(dest, Buffer.from(buf));
+      await platform.fs.writeBytes(dest, bytes);
       return {
-        path: path.relative(ctx.workspaceRoot || process.cwd(), dest),
-        sizeBytes: buf.byteLength,
+        path: platform.path.relative(workspaceRoot, dest),
+        sizeBytes: bytes.byteLength,
       };
     },
   };

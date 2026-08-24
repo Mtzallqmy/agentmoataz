@@ -27,5 +27,14 @@ jobs:
       - name: Typecheck
         run: pnpm typecheck
 
+      - name: Lint
+        run: pnpm lint
+
+      - name: Android import guard
+        run: pnpm check:android-imports
+
+      - name: Android Metro build
+        run: pnpm --filter @agentmoataz/app-android build
+
       - name: Test (non-watch)
         run: pnpm test

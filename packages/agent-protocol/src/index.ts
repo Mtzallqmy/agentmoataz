@@ -31,6 +31,7 @@ export const ErrorCode = z.enum([
   "INVALID_TOOL_ARGUMENT",
   "NETWORK_UNAVAILABLE",
   "MODEL_UNAVAILABLE",
+  "NO_REAL_PROVIDER_CONFIGURED",
   "MODEL_RATE_LIMITED",
   "TOOL_TIMEOUT",
   "TOOL_CANCELLED",
@@ -39,6 +40,8 @@ export const ErrorCode = z.enum([
   "CHECKPOINT_FAILED",
   "DATABASE_FAILED",
   "SECRET_UNAVAILABLE",
+  "APP_RESTARTED",
+  "UNEXPECTED_ERROR",
 ]);
 export type ErrorCode = z.infer<typeof ErrorCode>;
 
@@ -55,6 +58,7 @@ export const ErrorCategory = z.enum([
   "checkpoint",
   "database",
   "secret",
+  "runtime",
 ]);
 export type ErrorCategory = z.infer<typeof ErrorCategory>;
 
@@ -387,10 +391,21 @@ export const ProviderConfigSchema = z.object({
 });
 export type ProviderConfig = z.infer<typeof ProviderConfigSchema>;
 
+export const ModelToolCallSchema = z.object({
+  id: z.string().min(1),
+  name: z.string().min(1),
+  argumentsJson: z.string(),
+});
+export type ModelToolCall = z.infer<typeof ModelToolCallSchema>;
+
 export const ChatMessageSchema = z.object({
   role: z.enum(["system", "user", "assistant", "tool"]),
   content: z.string(),
   name: z.string().optional(),
+  /** Required by OpenAI-compatible APIs when role is tool. */
+  toolCallId: z.string().optional(),
+  /** Preserves the assistant's requested calls in multi-turn conversations. */
+  toolCalls: z.array(ModelToolCallSchema).optional(),
 });
 export type ChatMessage = z.infer<typeof ChatMessageSchema>;
 
@@ -400,11 +415,22 @@ export interface ChatRequest {
   messages: Array<z.infer<typeof ChatMessageSchema>>;
   temperature?: number;
   maxTokens?: number;
+  /** Tool schemas offered to the model (OpenAI function-calling fields). */
+  tools?: ProviderToolSchema[];
+}
+
+/** Schema describing one callable tool for the model. */
+export interface ProviderToolSchema {
+  name: string;
+  description: string;
+  parameters: Record<string, unknown>;
 }
 
 export interface ChatResponse {
   content: string;
   finishReason: "stop" | "length" | "error" | "cancelled";
+  /** Present when the model requested tool invocations. */
+  toolCalls?: ModelToolCall[];
 }
 
 /* ------------------------------------------------------------------ */

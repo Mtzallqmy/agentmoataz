@@ -14,6 +14,7 @@ import {
 } from "../src/index.js";
 import { MockProvider } from "@agentmoataz/agent-models";
 import { Workspace } from "@agentmoataz/agent-workspace";
+import { nodePlatform } from "@agentmoataz/agent-platform/node";
 
 let tmp: string;
 
@@ -33,14 +34,14 @@ function makeRuntime(opts?: {
   const workspaceRoot = path.join(tmp, `proj-${Math.random().toString(36).slice(2)}`);
   fs.mkdirSync(workspaceRoot, { recursive: true });
   const wsRoot = workspaceRoot;
-  for (const t of buildCoreFileTools(new Workspace(wsRoot))) tools.register(t);
+  for (const t of buildCoreFileTools(new Workspace(wsRoot, nodePlatform))) tools.register(t);
 
   const runtime = new AgentRuntime({
     providers: [new MockProvider()],
     events,
     tools,
     ...(opts?.permissions ? { permissions: opts.permissions } : {}),
-    checkpoints: new CheckpointManager(wsRoot),
+    checkpoints: new CheckpointManager(wsRoot, nodePlatform),
     ...(opts?.approvalResolver
       ? { approvalResolver: (req) => opts.approvalResolver!(req) }
       : {}),
@@ -134,7 +135,7 @@ describe("AgentRuntime end-to-end", () => {
     const wsRoot = path.join(tmp, `cp-${Math.random().toString(36).slice(2)}`);
     fs.mkdirSync(path.join(wsRoot, "src"), { recursive: true });
     fs.writeFileSync(path.join(wsRoot, "src/main.txt"), "original");
-    const cpManager = new CheckpointManager(wsRoot);
+    const cpManager = new CheckpointManager(wsRoot, nodePlatform);
 
     const cp = await cpManager.create("before risky edit");
     expect(cp.manifest.some((m) => m.relativePath === "src/main.txt")).toBe(true);
@@ -153,7 +154,7 @@ describe("AgentRuntime end-to-end", () => {
     const tools = new ToolRegistry();
     const wsRoot = path.join(tmp, `mx-${Math.random().toString(36).slice(2)}`);
     fs.mkdirSync(wsRoot, { recursive: true });
-    for (const t of buildCoreFileTools(new Workspace(wsRoot))) tools.register(t);
+    for (const t of buildCoreFileTools(new Workspace(wsRoot, nodePlatform))) tools.register(t);
 
     const runtime = new AgentRuntime({
       providers: [new MockProvider()],

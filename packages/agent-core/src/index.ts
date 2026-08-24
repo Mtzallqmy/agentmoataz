@@ -23,3 +23,19 @@ export {
   type ToolExecutionRecord,
 } from "./runtime.js";
 export { buildCoreFileTools } from "./core-tools.js";
+export type { RuntimeStore } from "./store.js";
+export {
+  runToolLoop,
+  type ToolLoopOptions,
+  type ToolLoopOutcome,
+  type ApprovalRequestLite,
+} from "./tool-loop.js";
+export {
+  ModelDrivenPlanner,
+  repairPlan,
+  findCycle,
+  PlanSchema,
+  PlanStepSchema,
+  type PlannerContext,
+  type ParsedPlan,
+} from "./model-planner.js";

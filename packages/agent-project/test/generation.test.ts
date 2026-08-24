@@ -11,6 +11,7 @@ import fsp from "node:fs/promises";
 import JSZip from "jszip";
 import { generateProject } from "../src/index.js";
 import { MockProvider } from "@agentmoataz/agent-models";
+import { nodePlatform } from "@agentmoataz/agent-platform/node";
 
 let parent: string;
 beforeAll(async () => {
@@ -27,6 +28,7 @@ describe("final acceptance: project generation workflow", () => {
       projectName: "todo-app",
       parentDir: parent,
       provider: new MockProvider(),
+      platform: nodePlatform,
     });
 
     // run completed through the full agent loop

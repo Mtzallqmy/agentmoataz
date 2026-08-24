@@ -12,6 +12,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@agentmoataz/agent-platform": "workspace:*",
     "@agentmoataz/agent-protocol": "workspace:*",
     "jszip": "^3.10.1"
   }

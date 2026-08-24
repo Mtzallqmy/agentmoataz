@@ -1,48 +1,47 @@
-/**
- * Workspace path security.
- *
- * All workspace file tools resolve paths against a project root and MUST
- * never escape it. This module is the single choke point for that rule.
- */
-import path from "node:path";
+import type { PathAdapter } from "@agentmoataz/agent-platform";
 import { AgentError } from "@agentmoataz/agent-protocol";
 
-const MAX_FILE_BYTES = 25 * 1024 * 1024; // 25 MB per-file limit
+const MAX_FILE_BYTES = 25 * 1024 * 1024;
 
-/** Normalize a user-supplied relative path and reject any escape attempt.
- *  The empty string (or ".") refers to the project root itself. */
-export function safeJoin(root: string, relativePath: string): string {
+/** Single path-security choke point, independent of Node/Expo. */
+export function safeJoin(root: string, relativePath: string, paths: PathAdapter): string {
   if (typeof relativePath !== "string" || !relativePath.trim()) {
-    if (relativePath === "") return path.resolve(root);
-    throw new AgentError({
-      code: "INVALID_TOOL_ARGUMENT",
-      category: "argument",
-      message: "path must be a non-empty string",
-      recoverable: false,
-      retryable: false,
-    });
+    if (relativePath === "") return paths.normalize(root);
+    throw invalidPath();
   }
 
-  // Reject absolute paths and windows drive prefixes outright.
-  if (path.isAbsolute(relativePath) || /^[a-zA-Z]:[\\/]/.test(relativePath)) {
+  const slashPath = relativePath.replace(/\\/g, "/");
+  if (
+    paths.isAbsolute(relativePath) ||
+    /^[a-zA-Z]:[\\/]/.test(relativePath) ||
+    slashPath.split("/").includes("..") ||
+    /%2e/i.test(relativePath)
+  ) {
     throw escapeError(relativePath);
   }
 
-  const normalized = path.normalize(relativePath);
-  if (normalized.startsWith("..") || path.isAbsolute(normalized) || normalized.includes(path.sep + "..")) {
+  const normalized = paths.normalize(relativePath);
+  const candidate = paths.normalize(paths.join(root, normalized));
+  const normalizedRoot = paths.normalize(root).replace(/\\/g, "/").replace(/\/$/, "");
+  const comparable = candidate.replace(/\\/g, "/");
+  if (comparable !== normalizedRoot && !comparable.startsWith(`${normalizedRoot}/`)) {
     throw escapeError(relativePath);
   }
-
-  const resolved = path.resolve(root, normalized);
-  const resolvedRoot = path.resolve(root) + path.sep;
-  if (!resolved.startsWith(resolvedRoot) && resolved !== path.resolve(root)) {
-    throw escapeError(relativePath);
-  }
-  return resolved;
+  return candidate;
 }
 
 export function maxFileBytes(): number {
   return MAX_FILE_BYTES;
+}
+
+function invalidPath(): AgentError {
+  return new AgentError({
+    code: "INVALID_TOOL_ARGUMENT",
+    category: "argument",
+    message: "path must be a non-empty string",
+    recoverable: false,
+    retryable: false,
+  });
 }
 
 function escapeError(attempted: string): AgentError {
