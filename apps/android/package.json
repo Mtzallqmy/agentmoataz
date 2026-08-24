@@ -9,6 +9,11 @@
     "build": "expo export --platform android --output-dir dist",
     "typecheck": "tsc --noEmit"
   },
+  "expo": {
+    "autolinking": {
+      "nativeModulesDir": "./modules"
+    }
+  },
   "dependencies": {
     "@babel/runtime": "^7.25.0",
     "@agentmoataz/agent-core": "workspace:*",
