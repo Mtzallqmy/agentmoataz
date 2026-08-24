@@ -8,12 +8,13 @@ import android.app.Service
 import android.content.Intent
 import android.os.Build
 import android.os.IBinder
+import android.os.PowerManager
 import androidx.core.app.NotificationCompat
 
 /**
  * Keeps the application process in foreground while an agent run is active.
  * Authoritative run/task state remains in SQLite; this service only owns the
- * Android foreground lifecycle and notification.
+ * Android foreground lifecycle, notification, and an active-run wake lock.
  */
 class AgentForegroundService : Service() {
   companion object {
@@ -28,6 +29,7 @@ class AgentForegroundService : Service() {
 
   private var runId: String? = null
   private var state: String = "Running"
+  private var wakeLock: PowerManager.WakeLock? = null
 
   override fun onCreate() {
     super.onCreate()
@@ -48,28 +50,53 @@ class AgentForegroundService : Service() {
       ACTION_START -> {
         runId = intent.getStringExtra(EXTRA_RUN_ID)
         state = "Running"
+        acquireWakeLock()
         startForeground(NOTIFICATION_ID, buildNotification())
       }
       ACTION_UPDATE -> {
         state = intent.getStringExtra(EXTRA_STATE)?.takeIf { it.isNotBlank() } ?: state
         getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, buildNotification())
       }
-      ACTION_STOP -> {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) stopForeground(STOP_FOREGROUND_REMOVE)
-        else @Suppress("DEPRECATION") stopForeground(true)
-        stopSelf()
-      }
+      ACTION_STOP -> stopRunService()
       else -> {
         // Never resurrect a stale run after process death. SQLite recovery in
         // the JS runtime marks unfinished work as interrupted on next launch.
+        releaseWakeLock()
         stopSelf()
       }
     }
     return START_NOT_STICKY
   }
 
+  private fun acquireWakeLock() {
+    val current = wakeLock
+    if (current?.isHeld == true) return
+    val powerManager = getSystemService(PowerManager::class.java)
+    wakeLock = powerManager.newWakeLock(
+      PowerManager.PARTIAL_WAKE_LOCK,
+      "$packageName:AgentRun"
+    ).apply {
+      setReferenceCounted(false)
+      acquire()
+    }
+  }
+
+  private fun stopRunService() {
+    releaseWakeLock()
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) stopForeground(STOP_FOREGROUND_REMOVE)
+    else @Suppress("DEPRECATION") stopForeground(true)
+    stopSelf()
+  }
+
+  private fun releaseWakeLock() {
+    wakeLock?.let { lock ->
+      if (lock.isHeld) lock.release()
+    }
+    wakeLock = null
+  }
+
   private fun buildNotification(): Notification {
-    val launchIntent = packageManager.getLaunchIntentForPackage(packageName)
+    val launchIntent = packageManager.getLaunchIntentForPackage(packageName) ?: Intent(this, application.javaClass)
     val contentIntent = PendingIntent.getActivity(
       this,
       0,
@@ -86,6 +113,11 @@ class AgentForegroundService : Service() {
       .setOnlyAlertOnce(true)
       .setCategory(NotificationCompat.CATEGORY_SERVICE)
       .build()
+  }
+
+  override fun onDestroy() {
+    releaseWakeLock()
+    super.onDestroy()
   }
 
   override fun onBind(intent: Intent?): IBinder? = null
