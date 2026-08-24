@@ -69,8 +69,7 @@ class AgentForegroundService : Service() {
   }
 
   private fun acquireWakeLock() {
-    val current = wakeLock
-    if (current?.isHeld == true) return
+    if (wakeLock?.isHeld == true) return
     val powerManager = getSystemService(PowerManager::class.java)
     wakeLock = powerManager.newWakeLock(
       PowerManager.PARTIAL_WAKE_LOCK,
@@ -96,23 +95,26 @@ class AgentForegroundService : Service() {
   }
 
   private fun buildNotification(): Notification {
-    val launchIntent = packageManager.getLaunchIntentForPackage(packageName) ?: Intent(this, application.javaClass)
-    val contentIntent = PendingIntent.getActivity(
-      this,
-      0,
-      launchIntent,
-      PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-    )
     val suffix = runId?.takeLast(8)?.let { " · $it" } ?: ""
-    return NotificationCompat.Builder(this, CHANNEL_ID)
+    val builder = NotificationCompat.Builder(this, CHANNEL_ID)
       .setContentTitle("AgentMoataz")
       .setContentText("$state$suffix")
       .setSmallIcon(android.R.drawable.stat_notify_sync)
-      .setContentIntent(contentIntent)
       .setOngoing(true)
       .setOnlyAlertOnce(true)
       .setCategory(NotificationCompat.CATEGORY_SERVICE)
-      .build()
+
+    packageManager.getLaunchIntentForPackage(packageName)?.let { launchIntent ->
+      val contentIntent = PendingIntent.getActivity(
+        this,
+        0,
+        launchIntent,
+        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+      )
+      builder.setContentIntent(contentIntent)
+    }
+
+    return builder.build()
   }
 
   override fun onDestroy() {
