@@ -1,89 +1,135 @@
-# AgentMoataz — Local-First Autonomous AI Agent (Android)
+# AgentMoataz — Local-First Autonomous AI Agent for Android
 
-One Android application that acts as a personal autonomous AI work environment:
-coding agent, project builder, research agent, artifact manager, file editor and
-multi-step task executor. The phone is the master controller; cloud services are
-optional tools, never the foundation.
+AgentMoataz is a phone-first autonomous AI work environment for Android. It combines a model-driven agent loop, project workspaces, file tools, persistent tasks and memory, approval-gated tool execution, artifacts/ZIP export, remote MCP, and an Android foreground service.
 
-## Architecture summary
+The phone remains the controller. Cloud services are optional capability providers rather than the application's source of truth.
 
+## Android release target
+
+The maintained release target is:
+
+- **Android 8.0 and newer** (`minSdkVersion 26`)
+- **64-bit ARM only** (`arm64-v8a`)
+- application ID: `dev.agentmoataz.app`
+- JDK 17 for Android builds
+- Expo SDK 52 / React Native 0.76
+- no Rust dependency in the Android application MVP
+
+See [`docs/ANDROID_RELEASE.md`](docs/ANDROID_RELEASE.md) for release signing, APK/AAB production workflow, ABI/minSdk verification, and GitHub Actions secrets.
+
+## Architecture
+
+```text
++----------------------------------------------------+
+| Expo / React Native Android App (TypeScript)       |
+| UI · AppAgentRuntime · SQLite · Workspace          |
+| Planner · Tool Loop · Memory · Skills · MCP        |
++---------------------------+------------------------+
+                            |
+                            v
++----------------------------------------------------+
+| Agent Core                                          |
+| ModelDrivenPlanner · ToolRegistry · PermissionEngine|
+| EventBus · Checkpoints · Artifacts · Reviewer       |
++---------------------------+------------------------+
+                            |
+                            v
++----------------------------------------------------+
+| Kotlin local Expo module                            |
+| Foreground service · Android lifecycle integration  |
++----------------------------------------------------+
+
+Optional: remote model APIs / MCP / later cloud sandbox
 ```
-+--------------------------------------------------+
-|   Expo / React Native Android App  (TypeScript)  |
-|   UI · Agent Core · Planner · Tools · Memory     |
-|   Permission Engine · Model Router · Events      |
-+------------------------+-------------------------+
-                         v
-+--------------------------------------------------+
-|        Kotlin Android Layer (lifecycle,          |
-|        foreground service, secure storage)       |
-+------------------------+-------------------------+
-              optional only: C/C++ | Python | WASM
+
+The production execution path is model-driven:
+
+```text
+USER GOAL
+  -> persisted run
+  -> ModelDrivenPlanner
+  -> model receives validated tool schemas
+  -> model requests tool calls
+  -> schema validation
+  -> PermissionEngine / approval
+  -> local tool execution
+  -> persisted events and results
+  -> model continues
+  -> reviewer gate
+  -> completion / failure
 ```
 
-Core packages (`packages/`, TypeScript strict):
+`setStepTools()` remains only for deterministic fixtures/tests; the Android production path uses model-selected tool calls.
+
+## Main packages
 
 | Package | Responsibility |
 |---|---|
-| `agent-protocol` | Versioned zod schemas: runs, tasks, steps, tool calls, approvals, artifacts, checkpoints, memory, providers, events, structured errors, feature flags |
-| `agent-workspace` | Project-rooted file tools with path-traversal defense, search/diff/patch, ZIP export + SHA-256 |
-| `agent-models` | `ModelProvider` abstraction, deterministic `MockProvider`, OpenAI-compatible adapter, capability-based router with fallback |
-| `agent-core` | AgentRuntime loop, TaskGraph/Planner, ToolRegistry, PermissionEngine (SAFE/BALANCED/AUTONOMOUS/CUSTOM), CheckpointManager, ArtifactManager, EventBus |
-| `agent-memory` | Layered memory (working/session/project/long-term) with relevance retrieval behind a swappable store interface |
+| `agent-protocol` | Versioned schemas for runs, tasks, tool calls, approvals, artifacts, providers, events and errors |
+| `agent-platform` | Portable filesystem/path/crypto/runtime interfaces with Node and Expo adapters |
+| `agent-workspace` | Project-rooted filesystem, traversal protection, search/diff/replace, ZIP + SHA-256 |
+| `agent-persistence` | Runtime stores and Android `expo-sqlite` persistence |
+| `agent-models` | Deterministic MockProvider plus production OpenAI-compatible provider and routing primitives |
+| `agent-core` | Agent runtime, model tool loop, model-driven planner, permissions, events, checkpoints, artifacts |
+| `agent-memory` | Persistent layered memory with relevance retrieval |
+| `agent-skills` | Bundled and externally loadable procedural skills |
+| `agent-mcp` | Remote MCP discovery/calls registered through ToolRegistry |
+| `agent-team` | Bounded delegation/reviewer coordination |
+| `agent-net` | Bounded HTTP/download tools with private-network SSRF blocking by default |
+| `agent-project` | Deterministic fixture workflows and a model-driven project-generation path |
 
-Execution model:
+## Local-first Android state
 
+Android uses SQLite and app-owned storage for projects and execution history. API keys are stored through `expo-secure-store`; SQLite stores provider configuration and a secret reference, not the plaintext credential.
+
+On startup, unfinished persisted runs are reconciled as `interrupted` rather than silently replaying potentially destructive work. The Tasks screen can start a new safe retry against the same project and goal.
+
+## Built-in workspace tools
+
+The Android agent can expose, subject to PermissionEngine policy:
+
+```text
+read_file
+read_range
+write_file
+create_directory
+delete_file
+copy_file
+move_file
+list_tree
+search_text
+replace_text
+file_metadata
+hash_file
+diff_files
+create_zip
+http_get
+http_request
+download_file
 ```
-USER GOAL -> CONTEXT -> PLAN -> TASK GRAPH -> STEP ->
-MODEL DECISION -> TOOL REQUEST -> PERMISSION CHECK -> EXECUTION ->
-VERIFICATION -> RETRY (linked attempts) / REPLAN -> FINAL REVIEW ->
-ARTIFACTS + REPORT
-```
 
-## Prerequisites
+Remote MCP tools are registered into the same ToolRegistry and do not bypass permissions.
 
-- Node.js ≥ 20, pnpm ≥ 9
-- For the Android build only: JDK 17+, Android SDK (`ANDROID_HOME`)
-
-## Install
-
-```bash
-pnpm install
-pnpm typecheck
-pnpm test          # vitest run (non-watch)
-```
-
-## Run / Build
-
-```bash
-# core packages (no device needed)
-pnpm typecheck && pnpm test
-
-# Android app (requires JDK 17+ and ANDROID_HOME)
-cd apps/android
-pnpm install
-npx expo run:android          # debug build on device/emulator
-```
-
-If no JDK is available, everything above the native layer still builds and all
-tests pass; the app layer builds once a JDK is present.
+Network tools accept public HTTP(S) destinations by default. Local/private network destinations require an explicit trusted opt-in in code; redirects are rechecked.
 
 ## Provider setup
 
-1. Settings → Models in the app (or edit provider config).
-2. API keys are stored **only** in secure storage (Android Keystore via
-   expo-secure-store). Config records keep a `secretRef`, never the key.
-3. Supported adapters: any OpenAI-compatible endpoint (OpenAI, OpenRouter,
-   Groq, LM Studio…), Anthropic, Google, plus the built-in offline MockProvider.
-4. Model IDs are user-configured; validate current IDs from your provider's
-   official docs — nothing is hard-coded.
+The Android MVP completes one provider path end-to-end: **OpenAI-compatible chat-completions endpoints with tool calling**.
 
-Model calls without network fall back to `MockProvider` so local workflows
-never break.
+In the app open **Models** and configure:
 
-## Permissions model
+- display name
+- base URL, for example `https://api.openai.com/v1/`
+- current model ID supported by your endpoint
+- API key
 
-Every tool call passes the PermissionEngine — no exceptions.
+The key is saved in secure storage. Saving settings with the key field blank preserves an existing key for the same secret reference.
+
+A real user task **does not silently fall back to MockProvider**. If no production provider is configured, the app returns `NO_REAL_PROVIDER_CONFIGURED`. MockProvider is reserved for deterministic tests and fixtures.
+
+## Permissions
+
+Every tool call goes through PermissionEngine.
 
 | Profile | Reads | Writes | Deletes | Net GET | Net POST | Git push |
 |---|---|---|---|---|---|---|
@@ -91,21 +137,73 @@ Every tool call passes the PermissionEngine — no exceptions.
 | BALANCED | allow | allow | ask | allow | ask | ask |
 | AUTONOMOUS | allow | allow | allow | allow | allow | ask |
 
-All decisions are audit-logged and tied to tool-call IDs.
+Unknown MCP tools map conservatively to an approval-gated execution category.
 
-## Optional cloud
+## Development verification
 
-Vercel Sandbox (heavy builds), Supabase (encrypted sync/backup), remote MCP and
-cloud browser are all behind feature flags that default to **off**. The app is
-fully functional with every optional flag disabled.
+Prerequisites:
 
-## Troubleshooting
+- Node.js 20+
+- pnpm 11.9.0
 
-- `pnpm install` blocked build scripts → ensure `allowBuilds: esbuild: true`
-  in `pnpm-workspace.yaml`.
-- Android build fails on Java version → install JDK 17 and set `JAVA_HOME`.
-- Tests hang → they shouldn't; all suites run via `vitest run` with explicit
-  per-test timeouts and deterministic mocks. Never use watch mode in CI.
+Run:
 
-See [docs/](./docs) for architecture, security, runtime design, tool protocol,
-cloud escalation policy, decisions log and third-party notices.
+```bash
+pnpm install --frozen-lockfile
+pnpm lint
+pnpm typecheck
+pnpm check:android-imports
+pnpm --filter @agentmoataz/app-android build
+pnpm test
+```
+
+The Android import guard ensures Node-only APIs do not leak into the React Native execution path.
+
+## Android development build
+
+Requires JDK 17 and Android SDK:
+
+```bash
+cd apps/android
+pnpm exec expo prebuild --platform android --clean
+pnpm exec expo run:android
+```
+
+## Android release build
+
+Pull-request CI builds an installable **release-mode Android 8+ arm64 APK** signed with a temporary CI test key and verifies:
+
+- `minSdkVersion=26`
+- `arm64-v8a` native ABI
+- no `armeabi-v7a`, `x86` or `x86_64` native libraries
+- APK signature
+- SHA-256 checksum
+
+For a stable production/update signature, configure the four signing secrets documented in `docs/ANDROID_RELEASE.md` and run the **Android Production Release** workflow. That workflow builds both APK and AAB.
+
+## Optional / deferred features
+
+The MVP deliberately does not depend on:
+
+- Rust
+- embedded Python
+- WASM
+- llama.cpp/local LLM
+- local image/video generation
+- Supabase sync
+- unrestricted local shell
+
+These can be added behind capability flags after the verified Android release path remains stable.
+
+## Security boundaries
+
+- workspaces reject absolute/traversal escape paths
+- ZIP exports exclude `.env`, `.agent`, `.git`, `node_modules` and existing exports by default
+- provider credentials are not persisted in project files or SQLite payloads
+- external web/MCP content is treated as untrusted data
+- model-selected tools cannot bypass schema validation or PermissionEngine
+- model/tool turns are bounded; repeated identical tool actions are stopped
+- network response/download sizes and redirects are capped
+- private-network HTTP destinations are blocked by default
+
+See [`docs/SECURITY.md`](docs/SECURITY.md), [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md), and [`docs/BUILD_STATUS.md`](docs/BUILD_STATUS.md) for more detail.
