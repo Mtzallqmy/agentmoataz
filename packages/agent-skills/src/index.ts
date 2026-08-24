@@ -20,6 +20,7 @@ export const SkillMetadataSchema = z.object({
   recovery: z.string().default("restore latest checkpoint"),
 });
 export type SkillMetadata = z.infer<typeof SkillMetadataSchema>;
+export type SkillMetadataInput = z.input<typeof SkillMetadataSchema>;
 
 export interface LoadedSkill {
   record: SkillRecord;
@@ -45,7 +46,7 @@ export class SkillManager {
 
   /** Load all skills under a root directory (skills/). Returns number loaded from disk. */
   async loadFrom(rootDir: string): Promise<number> {
-    const before = new Set(this.skills.keys());
+    let loaded = 0;
     let entries;
     try {
       entries = await this.platform.fs.list(rootDir);
@@ -61,10 +62,15 @@ export class SkillManager {
         continue;
       }
       for (const dir of catEntries.filter((entry) => entry.isDirectory)) {
-        await this.loadSkill(this.platform.path.join(catDir, dir.name)).catch(() => undefined);
+        try {
+          await this.loadSkill(this.platform.path.join(catDir, dir.name));
+          loaded++;
+        } catch {
+          // Invalid external skill is ignored rather than breaking app startup.
+        }
       }
     }
-    return [...this.skills.keys()].filter((name) => !before.has(name)).length;
+    return loaded;
   }
 
   async loadSkill(dir: string): Promise<LoadedSkill> {
@@ -179,7 +185,7 @@ export function createBuiltinSkills(): LoadedSkill[] {
   ];
 }
 
-function builtin(metadataInput: SkillMetadata): LoadedSkill {
+function builtin(metadataInput: SkillMetadataInput): LoadedSkill {
   const metadata = SkillMetadataSchema.parse(metadataInput);
   const markdown = [
     `# ${metadata.name}`,
